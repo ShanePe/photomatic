@@ -11,7 +11,8 @@
         overflow: hidden;
       }
 
-      #background {
+      /* Background layers for crossfade */
+      .background {
         position: absolute;
         top: 0;
         left: 0;
@@ -21,95 +22,87 @@
         background-position: center;
         background-repeat: no-repeat;
         filter: blur(15px);
-        opacity: 0.5;
+        opacity: 0;
+        transition: opacity 2s ease-in-out;
         z-index: -1;
       }
 
+      .background.show {
+        opacity: 0.5;
+      }
+
       img {
-        width: 100vw;
-        height: 100vh;
+        max-width: 100vw;
+        max-height: 100vh;
         object-fit: contain;
-        transition: all 2s ease-in-out;
+        transition: opacity 2s ease-in-out, transform 2s ease-in-out;
         position: absolute;
-        top: 0;
-        left: 0;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
         z-index: 1;
+
+        /* Soft shadow instead of glow */
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+        border-radius: 12px;
+        opacity: 0; /* start hidden */
       }
 
-      /* Transition states */
-      .fade {
-        opacity: 0;
-      }
-
+      /* Foreground transitions with centering preserved */
       .fade.show {
         opacity: 1;
       }
-
       .zoom {
-        transform: scale(0.8);
-        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.8);
       }
-
       .zoom.show {
-        transform: scale(1);
+        transform: translate(-50%, -50%) scale(1);
         opacity: 1;
       }
-
       .slide-left {
-        transform: translateX(-100%);
-        opacity: 0;
+        transform: translate(-150%, -50%);
       }
-
       .slide-left.show {
-        transform: translateX(0);
+        transform: translate(-50%, -50%);
         opacity: 1;
       }
-
       .slide-right {
-        transform: translateX(100%);
-        opacity: 0;
+        transform: translate(50%, -50%);
       }
-
       .slide-right.show {
-        transform: translateX(0);
+        transform: translate(-50%, -50%);
         opacity: 1;
       }
-
       .slide-up {
-        transform: translateY(100%);
-        opacity: 0;
+        transform: translate(-50%, -150%);
       }
-
       .slide-up.show {
-        transform: translateY(0);
+        transform: translate(-50%, -50%);
         opacity: 1;
       }
-
       .slide-down {
-        transform: translateY(-100%);
-        opacity: 0;
+        transform: translate(-50%, 50%);
       }
-
       .slide-down.show {
-        transform: translateY(0);
+        transform: translate(-50%, -50%);
         opacity: 1;
       }
-
       .rotate {
-        transform: rotate(-180deg) scale(0.5);
-        opacity: 0;
+        transform: translate(-50%, -50%) rotate(-180deg) scale(0.5);
       }
-
       .rotate.show {
-        transform: rotate(0deg) scale(1);
+        transform: translate(-50%, -50%) rotate(0deg) scale(1);
         opacity: 1;
       }
     </style>
   </head>
 
   <body>
-    <div id="background"></div>
+    <div id="background1" class="background"></div>
+    <div id="background2" class="background"></div>
+
     <img id="slideshow" src="" alt="slideshow" />
+
     <script>
       const transitions = [
         'fade',
@@ -121,24 +114,58 @@
         'rotate',
       ];
 
+      let currentBg = 1;
+
       async function loadImage() {
         const img = document.getElementById('slideshow');
         const randomTransition =
           transitions[Math.floor(Math.random() * transitions.length)];
+
+        // Reset transition state
         img.className = randomTransition;
+
         const res = await fetch('/random');
         if (res.ok) {
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
-          document.getElementById(
-            'background'
-          ).style.backgroundImage = `url(${url})`;
-          setTimeout(() => {
-            img.src = url;
-            img.onload = () => img.classList.add('show');
-          }, 500);
+
+          // Preload the image first
+          const preload = new Image();
+          preload.src = url;
+
+          preload.onload = () => {
+            // Background crossfade
+            const newBg = currentBg === 1 ? 2 : 1;
+            const oldBg = currentBg === 1 ? 1 : 2;
+            const bgNew = document.getElementById('background' + newBg);
+            const bgOld = document.getElementById('background' + oldBg);
+
+            bgNew.style.backgroundImage = `url(${url})`;
+            bgNew.classList.add('show');
+            bgOld.classList.remove('show');
+            currentBg = newBg;
+
+            // Foreground: only fade out old when new is ready
+            const oldSrc = img.src;
+            const newImg = new Image();
+            newImg.src = url;
+
+            newImg.onload = () => {
+              // Fade out old
+              img.classList.remove('show');
+
+              // Swap src after fade out completes
+              setTimeout(() => {
+                img.src = url;
+                img.onload = () => {
+                  img.classList.add('show'); // fade in new
+                };
+              }, 500); // small delay to sync fade
+            };
+          };
         }
       }
+
       loadImage();
       setInterval(loadImage, 30000); // every 30 seconds
     </script>

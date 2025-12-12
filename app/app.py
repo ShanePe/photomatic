@@ -1,22 +1,84 @@
 """
 Photomatic Flask Application
 
-A web application for displaying a random photo slideshow from a local directory.
-Supports various image formats including HEIC conversion to JPEG.
+Overview:
+---------
+This Flask application serves a photo slideshow from a local directory. It supports
+multiple image formats, including HEIC (converted to JPEG on the fly). The slideshow
+prefers photos taken on the same calendar day across different years. Each browser
+session gets its own sequence: all same-day photos are served in order before falling
+back to random from the entire collection.
+
+Caching:
+--------
+- Photo lists are cached as line-oriented text files (one path per line).
+- Cache files are stored in a writable directory under the Flask app's instance_path
+  (e.g. <project>/instance/photo_cache).
+- This design avoids keeping large lists in memory; only the current line is read
+  per request.
+- Cache is rebuilt once per day or when missing.
+
+Session Behavior:
+-----------------
+- Each browser session tracks its own index through today's photos.
+- On the first request of the day, the session index resets to 0.
+- The session then receives each same-day photo sequentially.
+- Once all same-day photos are exhausted, the session falls back to random selection
+  from the entire photo collection.
+
+Date Resolution Priority:
+-------------------------
+1. Filename patterns (YYYYMMDD or YYYY-MM-DD).
+2. EXIF metadata (DateTimeOriginal, DateTimeDigitized, DateTime).
+3. File modified time.
+
+Error Handling:
+---------------
+- Narrow exception handling (ValueError, OSError, UnidentifiedImageError).
+- Error logging uses lazy % formatting for efficiency.
+
+Usage:
+------
+    python app.py --photos /path/to/photos --port 5000
+
+Arguments:
+----------
+--photos   Base folder containing images (required).
+--port     Port to run the server (default: 5000).
+
+Endpoints:
+----------
+/          Serves the main slideshow page.
+/random    Serves an image:
+             - Sequential same-day photo (per session).
+             - Falls back to random photo if none available.
 """
 
 import argparse
 import io
 import os
 import random
+import re
+import datetime
 
-from flask import Flask, render_template, send_file
-from PIL import Image
+from flask import Flask, render_template, send_file, session
+from PIL import Image, ExifTags, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 
+# Initialize Flask app
 app = Flask(__name__)
-register_heif_opener()  # Register HEIF opener for Image.open to handle HEIC files
+app.secret_key = "replace_with_a_secure_random_key"  # required for session handling
+
+# Register HEIF opener so Pillow can read HEIC files
+register_heif_opener()
+
+# Global configuration
 PHOTO_ROOT = None
+CACHE_DATE = None
+
+# Cache directory is inside the app's instance_path (writable area for the app)
+CACHE_DIR = os.path.join(app.instance_path, "photo_cache")
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 
 def convert_heic_to_jpg(heic_path):
@@ -24,43 +86,224 @@ def convert_heic_to_jpg(heic_path):
     Convert an Apple HEIC image file to JPEG format.
 
     Args:
-        heic_path (str): Path to the HEIC file.
+        heic_path (str): Path to the HEIC image file.
 
     Returns:
-        io.BytesIO: A BytesIO buffer containing the JPEG image data.
+        io.BytesIO: In-memory JPEG image buffer positioned at start.
+
+    Raises:
+        UnidentifiedImageError: If the image cannot be identified as HEIC.
+        OSError: If an I/O error occurs during conversion.
     """
-    img = Image.open(heic_path)
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG")
-    buf.seek(0)
-    return buf
+    try:
+        img = Image.open(heic_path)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+        return buf
+    except UnidentifiedImageError as e:
+        app.logger.error("Cannot identify HEIC image %s: %s", heic_path, e)
+        raise
+    except OSError as e:
+        app.logger.error("I/O error converting HEIC %s: %s", heic_path, e)
+        raise
 
 
-def pick_random_file(base_dir):
+def parse_date_from_filename(filename):
     """
-    Select a random image file from the given base directory using reservoir sampling.
+    Extract a date from filename patterns.
 
-    This method efficiently picks one random file without loading all files into memory,
-    making it suitable for large directories.
+    Supported formats:
+        - YYYYMMDD (e.g., IMG-20130419-00132.jpg)
+        - YYYY-MM-DD (e.g., 2020-12-25.png)
 
     Args:
-        base_dir (str): The root directory to search for images.
+        filename (str): The filename to parse.
 
     Returns:
-        str or None: The path to a randomly selected image file, or None if no images found.
-
-    Supported formats: .jpg, .jpeg, .png, .gif, .webp, .heic
+        datetime.date | None: Parsed date if valid, else None.
     """
+    m1 = re.search(r"(\d{4})(\d{2})(\d{2})", filename)
+    if m1:
+        try:
+            return datetime.date(int(m1.group(1)), int(m1.group(2)), int(m1.group(3)))
+        except ValueError as e:
+            app.logger.error("Invalid YYYYMMDD in filename %s: %s", filename, e)
+
+    m2 = re.search(r"(\d{4})-(\d{2})-(\d{2})", filename)
+    if m2:
+        try:
+            return datetime.date(int(m2.group(1)), int(m2.group(2)), int(m2.group(3)))
+        except ValueError as e:
+            app.logger.error("Invalid YYYY-MM-DD in filename %s: %s", filename, e)
+
+    return None
+
+
+def get_photo_date(path):
+    """
+    Determine the date associated with a photo.
+
+    Priority:
+        1. Filename patterns (YYYYMMDD or YYYY-MM-DD).
+        2. EXIF metadata (DateTimeOriginal, DateTimeDigitized, DateTime).
+        3. File modified time.
+
+    Args:
+        path (str): Path to the photo file.
+
+    Returns:
+        datetime.date | None: The resolved date, or None if unavailable.
+    """
+    filename_date = parse_date_from_filename(os.path.basename(path))
+    if filename_date:
+        return filename_date
+
+    try:
+        img = Image.open(path)
+        exif = img.getexif()
+        if exif:
+            for tag, value in exif.items():
+                tag_name = ExifTags.TAGS.get(tag, tag)
+                if tag_name in ("DateTimeOriginal", "DateTimeDigitized", "DateTime"):
+                    try:
+                        dt = datetime.datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+                        return dt.date()
+                    except ValueError as e:
+                        app.logger.error("Bad EXIF date in %s: %s", path, e)
+    except UnidentifiedImageError as e:
+        app.logger.error("Cannot identify image %s: %s", path, e)
+    except OSError as e:
+        app.logger.error("I/O error reading %s: %s", path, e)
+
+    try:
+        ts = os.path.getmtime(path)
+        return datetime.date.fromtimestamp(ts)
+    except OSError as e:
+        app.logger.error("File timestamp read failed for %s: %s", path, e)
+
+    return None
+
+
+def build_cache(base_dir):
+    """
+    Scan the photo directory and build cache lists for today's date.
+
+    Creates two line-oriented text files in the cache directory:
+        - cache_all.txt: All photo paths (one per line).
+        - cache_same_day.txt: Photos matching today's month/day across years.
+
+    Args:
+        base_dir (str): Base directory containing photos.
+
+    Side effects:
+        Writes cache files and updates the global CACHE_DATE marker.
+    """
+    global CACHE_DATE
+    today = datetime.date.today()
     extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic")
-    chosen = None
-    count = 0
-    for root, _, files in os.walk(base_dir):
-        for f in files:
-            if f.lower().endswith(extensions):
-                count += 1
-                if random.randint(1, count) == 1:
-                    chosen = os.path.join(root, f)
-    return chosen
+
+    all_path = os.path.join(CACHE_DIR, "cache_all.txt")
+    same_day_path = os.path.join(CACHE_DIR, "cache_same_day.txt")
+
+    with open(all_path, "w", encoding="utf-8") as f_all, open(
+        same_day_path, "w", encoding="utf-8"
+    ) as f_same:
+        for root, _, files in os.walk(base_dir):
+            for f in files:
+                if f.lower().endswith(extensions):
+                    path = os.path.join(root, f)
+                    f_all.write(path + "\n")
+                    photo_date = get_photo_date(path)
+                    if (
+                        photo_date
+                        and photo_date.month == today.month
+                        and photo_date.day == today.day
+                    ):
+                        f_same.write(path + "\n")
+
+    CACHE_DATE = today
+
+
+def get_line(filepath, index):
+    """
+    Return the line at a given index from a text file.
+
+    Args:
+        filepath (str): Path to the text file.
+        index (int): 0-based line index.
+
+    Returns:
+        str | None: Line content (stripped), or None if out of range or file missing.
+    """
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                if i == index:
+                    return line.strip()
+    except FileNotFoundError:
+        return None
+    return None
+
+
+def count_lines(filepath):
+    """
+    Count the number of lines in a text file.
+
+    Args:
+        filepath (str): Path to the text file.
+
+    Returns:
+        int: Number of lines, or 0 if file not found.
+    """
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            return sum(1 for _ in f)
+    except FileNotFoundError:
+        return 0
+
+
+def pick_file(base_dir):
+    """
+    Select a photo for the current session.
+
+    Logic:
+        - Serve sequential same-day photos per session using a session index.
+        - Once exhausted, fall back to random from all photos.
+
+    Args:
+        base_dir (str): Base directory containing photos.
+
+    Returns:
+        str | None: Path to the selected photo, or None if none available.
+    """
+    today = datetime.date.today()
+    all_file = os.path.join(CACHE_DIR, "cache_all.txt")
+    same_day_file = os.path.join(CACHE_DIR, "cache_same_day.txt")
+
+    # Rebuild cache if date changed or cache missing
+    if CACHE_DATE != today or not os.path.exists(all_file):
+        build_cache(base_dir)
+
+    # Initialize or reset session state when day changes
+    if "photo_date" not in session or session["photo_date"] != str(today):
+        session["photo_date"] = str(today)
+        session["photo_index"] = 0
+
+    # Serve next same-day photo for this session
+    idx = session.get("photo_index", 0)
+    path = get_line(same_day_file, idx)
+    if path:
+        session["photo_index"] = idx + 1
+        return path
+
+    # Fallback: random from all photos (without loading entire file)
+    total = count_lines(all_file)
+    if total > 0:
+        rand_idx = random.randrange(total)
+        return get_line(all_file, rand_idx)
+
+    return None
 
 
 @app.route("/")
@@ -69,7 +312,7 @@ def index():
     Serve the main slideshow page.
 
     Returns:
-        Response: Rendered HTML template for the slideshow interface.
+        Response: Rendered index.html template.
     """
     return render_template("index.html")
 
@@ -77,31 +320,62 @@ def index():
 @app.route("/random")
 def random_image():
     """
-    Serve a random image from the configured photo directory.
+    Serve an image from the photo directory.
 
-    Selects a random image, converts HEIC files to JPEG if necessary,
-    and returns the image data.
+    Behavior:
+        - Sequential same-day photo per session.
+        - Falls back to random from the entire collection.
 
     Returns:
-        Response: Image file response, or 404 error if no images found.
+        Response: The image file or converted HEIC JPEG as a Flask response.
+
+    Status codes:
+        200: Image served successfully.
+        404: No images found.
+        500: Error while serving image.
     """
-    path = pick_random_file(PHOTO_ROOT)
-    if not path:
-        return "No images found", 404
+    try:
+        path = pick_file(PHOTO_ROOT)
+        if not path:
+            return "No images found", 404
 
-    # Convert HEIC to JPEG on the fly
-    if path.lower().endswith(".heic"):
-        buf = convert_heic_to_jpg(path)
-        return send_file(buf, mimetype="image/jpeg")
+        if path.lower().endswith(".heic"):
+            buf = convert_heic_to_jpg(path)
+            return send_file(buf, mimetype="image/jpeg")
 
-    return send_file(path)
+        return send_file(path)
+    except (OSError, UnidentifiedImageError, ValueError) as e:
+        app.logger.error("Error serving image %s: %s", type(e).__name__, e)
+        return f"Error: {e}", 500
+
+
+def parse_args():
+    """
+    Parse command-line arguments for the application.
+
+    Returns:
+        argparse.Namespace: Parsed arguments containing:
+            - photos (str): Base folder containing images.
+            - port (int): Port to run the server.
+    """
+    parser = argparse.ArgumentParser(description="Photo slideshow")
+    parser.add_argument("--photos", required=True, help="Base folder containing images")
+    parser.add_argument("--port", type=int, default=5000, help="Port to run the server")
+    return parser.parse_args()
+
+
+def run_app(args):
+    """
+    Configure global settings and run the Flask application.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+    """
+    global PHOTO_ROOT
+    PHOTO_ROOT = args.photos
+    app.run(debug=True, host="0.0.0.0", port=args.port)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Random photo slideshow")
-    parser.add_argument("--photos", required=True, help="Base folder containing images")
-    parser.add_argument("--port", type=int, default=5000, help="Port to run the server")
-    args = parser.parse_args()
-
-    PHOTO_ROOT = args.photos
-    app.run(debug=True, host="0.0.0.0", port=args.port)
+    args = parse_args()
+    run_app(args)
