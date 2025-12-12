@@ -1,8 +1,7 @@
 """
 Photomatic Flask Application
+============================
 
-Overview:
----------
 This Flask application serves a photo slideshow from a local directory. It supports
 multiple image formats, including HEIC (converted to JPEG on the fly). The slideshow
 prefers photos taken on the same calendar day across different years. Each browser
@@ -81,19 +80,19 @@ CACHE_DIR = os.path.join(app.instance_path, "photo_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 
+@app.before_request
+def reset_on_first_visit():
+    # If this is a brand new session (no cookie yet)
+    if "initialized" not in session:
+        # Reset your slideshow index
+        session.clear()
+        session["photo_index"] = 0
+        session["initialized"] = True
+
+
 def convert_heic_to_jpg(heic_path):
     """
     Convert an Apple HEIC image file to JPEG format.
-
-    Args:
-        heic_path (str): Path to the HEIC image file.
-
-    Returns:
-        io.BytesIO: In-memory JPEG image buffer positioned at start.
-
-    Raises:
-        UnidentifiedImageError: If the image cannot be identified as HEIC.
-        OSError: If an I/O error occurs during conversion.
     """
     try:
         img = Image.open(heic_path)
@@ -111,17 +110,7 @@ def convert_heic_to_jpg(heic_path):
 
 def parse_date_from_filename(filename):
     """
-    Extract a date from filename patterns.
-
-    Supported formats:
-        - YYYYMMDD (e.g., IMG-20130419-00132.jpg)
-        - YYYY-MM-DD (e.g., 2020-12-25.png)
-
-    Args:
-        filename (str): The filename to parse.
-
-    Returns:
-        datetime.date | None: Parsed date if valid, else None.
+    Extract a date from filename patterns (YYYYMMDD or YYYY-MM-DD).
     """
     m1 = re.search(r"(\d{4})(\d{2})(\d{2})", filename)
     if m1:
@@ -143,17 +132,7 @@ def parse_date_from_filename(filename):
 def get_photo_date(path):
     """
     Determine the date associated with a photo.
-
-    Priority:
-        1. Filename patterns (YYYYMMDD or YYYY-MM-DD).
-        2. EXIF metadata (DateTimeOriginal, DateTimeDigitized, DateTime).
-        3. File modified time.
-
-    Args:
-        path (str): Path to the photo file.
-
-    Returns:
-        datetime.date | None: The resolved date, or None if unavailable.
+    Priority: filename → EXIF → file modified time.
     """
     filename_date = parse_date_from_filename(os.path.basename(path))
     if filename_date:
@@ -190,7 +169,7 @@ def build_cache(base_dir):
     Scan the photo directory and build cache lists for today's date.
 
     Creates two line-oriented text files in the cache directory:
-        - cache_all.txt: All photo paths (one per line).
+        - cache_all.txt: All photo paths (excluding same-day photos).
         - cache_same_day.txt: Photos matching today's month/day across years.
 
     Args:
@@ -213,7 +192,6 @@ def build_cache(base_dir):
             for f in files:
                 if f.lower().endswith(extensions):
                     path = os.path.join(root, f)
-                    f_all.write(path + "\n")
                     photo_date = get_photo_date(path)
                     if (
                         photo_date
@@ -221,6 +199,8 @@ def build_cache(base_dir):
                         and photo_date.day == today.day
                     ):
                         f_same.write(path + "\n")
+                    else:
+                        f_all.write(path + "\n")
 
     CACHE_DATE = today
 
