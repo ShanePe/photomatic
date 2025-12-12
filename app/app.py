@@ -201,7 +201,7 @@ def build_cache(base_dir):
     try:
         today = datetime.date.today()
         extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic")
-
+        ignore_dirs = {"thumbnails", "cache", ".git", "__pycache__", "@__thumb"}
         all_path = os.path.join(CACHE_DIR, "cache_all.txt")
         same_day_path = os.path.join(CACHE_DIR, "cache_same_day.txt")
 
@@ -209,6 +209,9 @@ def build_cache(base_dir):
             same_day_path, "w", encoding="utf-8"
         ) as f_same:
             for root, _, files in os.walk(base_dir):
+                if any(ign in root.lower() for ign in ignore_dirs):
+                    continue
+
                 for f in files:
                     if f.lower().endswith(extensions):
                         path = os.path.join(root, f)
