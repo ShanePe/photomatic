@@ -93,6 +93,8 @@ CACHE_DATE = None
 CACHE_DIR = os.path.join(app.instance_path, "photo_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 BUILDING_CACHE = False
+MAX_WIDTH = 2048
+MAX_HEIGHT = 1600
 
 
 @app.before_request
@@ -103,6 +105,35 @@ def reset_on_first_visit():
         session.clear()
         session["photo_index"] = 0
         session["initialized"] = True
+
+
+def resize_image_if_needed(path: str) -> io.BytesIO:
+    """
+    Open an image from path. If larger than MAX_WIDTH or MAX_HEIGHT,
+    resize proportionally and return as a BytesIO buffer.
+    """
+    with Image.open(path) as img:
+        width, height = img.size
+
+        # Check if resize is needed
+        if width > MAX_WIDTH or height > MAX_HEIGHT:
+            # Calculate new size preserving aspect ratio
+            img.thumbnail((MAX_WIDTH, MAX_HEIGHT), Image.Resampling.LANCZOS)
+            app.logger.info(
+                "Resized image %s from %sx%s to %sx%s",
+                os.path.basename(path),
+                width,
+                height,
+                img.width,
+                img.height,
+            )
+
+        # Save to buffer
+        buf = io.BytesIO()
+        # Always save as JPEG for consistency, or use img.format if you want original
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+        return buf
 
 
 def convert_heic_to_jpg(heic_path):
@@ -380,11 +411,8 @@ def random_image():
             session["photo_index"],
         )
 
-        if path.lower().endswith(".heic"):
-            buf = convert_heic_to_jpg(path)
-            return send_file(buf, mimetype="image/jpeg")
-
-        return send_file(path, mimetype=mime_type)
+        buf = resize_image_if_needed(path)
+        return send_file(buf, mimetype="image/jpeg")
 
     except (OSError, UnidentifiedImageError, ValueError) as e:
         app.logger.error("Error serving image: %s", e)
