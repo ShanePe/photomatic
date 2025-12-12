@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Random Slideshow</title>
+    <style>
+      body {
+        margin: 0;
+        background: #000;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      #background {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        filter: blur(10px);
+        z-index: -1;
+      }
+
+      img {
+        width: 100vw;
+        height: 100vh;
+        object-fit: contain;
+        transition: all 2s ease-in-out;
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 1;
+      }
+
+      /* Transition states */
+      .fade {
+        opacity: 0;
+      }
+
+      .fade.show {
+        opacity: 1;
+      }
+
+      .zoom {
+        transform: scale(0.8);
+        opacity: 0;
+      }
+
+      .zoom.show {
+        transform: scale(1);
+        opacity: 1;
+      }
+
+      .slide-left {
+        transform: translateX(-100%);
+        opacity: 0;
+      }
+
+      .slide-left.show {
+        transform: translateX(0);
+        opacity: 1;
+      }
+
+      .slide-right {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+
+      .slide-right.show {
+        transform: translateX(0);
+        opacity: 1;
+      }
+
+      .slide-up {
+        transform: translateY(100%);
+        opacity: 0;
+      }
+
+      .slide-up.show {
+        transform: translateY(0);
+        opacity: 1;
+      }
+
+      .slide-down {
+        transform: translateY(-100%);
+        opacity: 0;
+      }
+
+      .slide-down.show {
+        transform: translateY(0);
+        opacity: 1;
+      }
+
+      .rotate {
+        transform: rotate(-180deg) scale(0.5);
+        opacity: 0;
+      }
+
+      .rotate.show {
+        transform: rotate(0deg) scale(1);
+        opacity: 1;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="background"></div>
+    <img id="slideshow" src="" alt="slideshow" />
+    <script>
+      const transitions = [
+        'fade',
+        'zoom',
+        'slide-left',
+        'slide-right',
+        'slide-up',
+        'slide-down',
+        'rotate',
+      ];
+
+      async function loadImage() {
+        const img = document.getElementById('slideshow');
+        const randomTransition =
+          transitions[Math.floor(Math.random() * transitions.length)];
+        img.className = randomTransition;
+        const res = await fetch('/random');
+        if (res.ok) {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          document.getElementById(
+            'background'
+          ).style.backgroundImage = `url(${url})`;
+          setTimeout(() => {
+            img.src = url;
+            img.onload = () => img.classList.add('show');
+          }, 500);
+        }
+      }
+      loadImage();
+      setInterval(loadImage, 30000); // every 30 seconds
+    </script>
+  </body>
+</html>
