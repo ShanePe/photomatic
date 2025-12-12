@@ -57,12 +57,26 @@ import argparse
 import io
 import os
 import random
+import logging
+from logging.handlers import TimedRotatingFileHandler
 import re
 import datetime
 
-from flask import Flask, render_template, send_file, session
+from flask import Flask, render_template, send_file, session, request
 from PIL import Image, ExifTags, UnidentifiedImageError
 from pillow_heif import register_heif_opener
+
+# Configure logging: one file per day
+log_handler = TimedRotatingFileHandler(
+    "slideshow.log", when="midnight", interval=1, backupCount=7, encoding="utf-8"
+)
+log_handler.suffix = "%Y-%m-%d"  # adds date to filename
+formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+log_handler.setFormatter(formatter)
+
+logger = logging.getLogger("slideshow")
+logger.setLevel(logging.INFO)
+logger.addHandler(log_handler)
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -78,6 +92,7 @@ CACHE_DATE = None
 # Cache directory is inside the app's instance_path (writable area for the app)
 CACHE_DIR = os.path.join(app.instance_path, "photo_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
+BUILDING_CACHE = False
 
 
 @app.before_request
@@ -179,39 +194,46 @@ def build_cache(base_dir):
         Writes cache files and updates the global CACHE_DATE marker.
     """
     global CACHE_DATE
-    today = datetime.date.today()
-    extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic")
+    global BUILDING_CACHE
 
-    all_path = os.path.join(CACHE_DIR, "cache_all.txt")
-    same_day_path = os.path.join(CACHE_DIR, "cache_same_day.txt")
+    CACHE_DATE = None
+    BUILDING_CACHE = True
+    try:
+        today = datetime.date.today()
+        extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic")
 
-    with open(all_path, "w", encoding="utf-8") as f_all, open(
-        same_day_path, "w", encoding="utf-8"
-    ) as f_same:
-        for root, _, files in os.walk(base_dir):
-            for f in files:
-                if f.lower().endswith(extensions):
-                    path = os.path.join(root, f)
-                    photo_date = get_photo_date(path)
-                    if (
-                        photo_date
-                        and photo_date.month == today.month
-                        and photo_date.day == today.day
-                    ):
-                        f_same.write(path + "\n")
-                    else:
-                        f_all.write(path + "\n")
+        all_path = os.path.join(CACHE_DIR, "cache_all.txt")
+        same_day_path = os.path.join(CACHE_DIR, "cache_same_day.txt")
 
-    CACHE_DATE = today
+        with open(all_path, "w", encoding="utf-8") as f_all, open(
+            same_day_path, "w", encoding="utf-8"
+        ) as f_same:
+            for root, _, files in os.walk(base_dir):
+                for f in files:
+                    if f.lower().endswith(extensions):
+                        path = os.path.join(root, f)
+                        photo_date = get_photo_date(path)
+                        if (
+                            photo_date
+                            and photo_date.month == today.month
+                            and photo_date.day == today.day
+                        ):
+                            f_same.write(path + "\n")
+                        else:
+                            f_all.write(path + "\n")
+
+        CACHE_DATE = today
+    finally:
+        BUILDING_CACHE = False
 
 
-def get_line(filepath, index):
+def get_line(filepath, file_line_idx):
     """
     Return the line at a given index from a text file.
 
     Args:
         filepath (str): Path to the text file.
-        index (int): 0-based line index.
+        file_line_idx (int): 0-based line index.
 
     Returns:
         str | None: Line content (stripped), or None if out of range or file missing.
@@ -219,7 +241,7 @@ def get_line(filepath, index):
     try:
         with open(filepath, encoding="utf-8") as f:
             for i, line in enumerate(f):
-                if i == index:
+                if i == file_line_idx:
                     return line.strip()
     except FileNotFoundError:
         return None
@@ -264,6 +286,8 @@ def pick_file(base_dir):
     # Rebuild cache if date changed or cache missing
     if CACHE_DATE != today or not os.path.exists(all_file):
         build_cache(base_dir)
+        session["photo_date"] = str(today)
+        session["photo_index"] = 0
 
     # Initialize or reset session state when day changes
     if "photo_date" not in session or session["photo_date"] != str(today):
@@ -315,17 +339,52 @@ def random_image():
         500: Error while serving image.
     """
     try:
+        if BUILDING_CACHE:
+            return "Cache is being built, please try again shortly.", 503
+
         path = pick_file(PHOTO_ROOT)
         if not path:
             return "No images found", 404
+
+        # Gather metadata
+        file_size = os.path.getsize(path)
+        mime_type = (
+            "image/jpeg"
+            if path.lower().endswith((".jpg", ".jpeg", ".heic"))
+            else "image/png"
+        )
+        client_ip = request.remote_addr
+        user_agent = request.headers.get("User-Agent")
+
+        width, height = None, None
+        try:
+            with Image.open(path) as img:
+                width, height = img.size
+        except Exception:
+            pass
+
+        # Log details
+        app.logger.info(
+            "Served image: %s | Size: %.1f KB | Dimensions: %sx%s | MIME: %s | "
+            "Client IP: %s | UA: %s | Photo index: %s",
+            os.path.basename(path),
+            file_size / 1024,
+            width,
+            height,
+            mime_type,
+            client_ip,
+            user_agent,
+            session["photo_index"],
+        )
 
         if path.lower().endswith(".heic"):
             buf = convert_heic_to_jpg(path)
             return send_file(buf, mimetype="image/jpeg")
 
-        return send_file(path)
+        return send_file(path, mimetype=mime_type)
+
     except (OSError, UnidentifiedImageError, ValueError) as e:
-        app.logger.error("Error serving image %s: %s", type(e).__name__, e)
+        app.logger.error("Error serving image: %s", e)
         return f"Error: {e}", 500
 
 
