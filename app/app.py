@@ -64,7 +64,7 @@ import re
 import datetime
 
 from flask import Flask, render_template, send_file, session, request
-from PIL import Image, ExifTags, UnidentifiedImageError, ImageDraw, ImageFont
+from PIL import Image, ExifTags, UnidentifiedImageError, ImageDraw, ImageFont, ImageOps
 from pillow_heif import register_heif_opener
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -145,6 +145,9 @@ def resize_and_compress(
     # --- Process image ---
     original_size = os.path.getsize(path)
     with Image.open(path) as img:
+        # Fix orientation based on EXIF metadata
+        img = ImageOps.exif_transpose(img)
+
         width, height = img.size
 
         if width > MAX_WIDTH or height > MAX_HEIGHT:

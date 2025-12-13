@@ -4,15 +4,16 @@ services:
   photomatic:
     build: .
     container_name: photomatic_app
-    ports:
-      - "5050:5050"
+    network_mode: host
     volumes:
       # Persist logs and cache
-      - ./instance:/app/instance
+      - ./docker:/app/instance
       # Persist photo storage
-      - ./photo-storage:/app/photo-storage
+      - /mnt/Pennicloud/Home/Photos:/app/photo-storage
     environment:
       # Example environment variables (add your own as needed)
       FLASK_ENV: production
       PORT: 5050
     restart: unless-stopped
+ # Override the default CMD in your Dockerfile
+    command: python3 app/app.py --photos "/app/photo-storage" --port "5050"
