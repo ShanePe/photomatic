@@ -107,13 +107,24 @@ def reset_on_first_visit():
         session["initialized"] = True
 
 
-def resize_and_compress(path: str, quality: int = 75) -> io.BytesIO:
+import io
+from PIL import Image, ImageDraw, ImageFont
+
+MAX_WIDTH = 2048
+MAX_HEIGHT = 1600
+
+
+def resize_and_compress(
+    path: str, overlay_text: str = "", quality: int = 75
+) -> io.BytesIO:
     """
     Open an image from path. If larger than MAX_WIDTH or MAX_HEIGHT,
-    resize proportionally. Then compress and return as a BytesIO buffer.
+    resize proportionally. Optionally overlay text (e.g. date) in the
+    top-left corner. Then compress and return as a BytesIO buffer.
 
     Args:
         path: Path to the image file.
+        overlay_text: Optional string to overlay (e.g. '2025-12-13').
         quality: JPEG quality (1–95). Lower = smaller file, more compression.
 
     Returns:
@@ -126,9 +137,22 @@ def resize_and_compress(path: str, quality: int = 75) -> io.BytesIO:
         if width > MAX_WIDTH or height > MAX_HEIGHT:
             img.thumbnail((MAX_WIDTH, MAX_HEIGHT), Image.Resampling.LANCZOS)
 
-        buf = io.BytesIO()
+        # --- Overlay text if provided ---
+        if overlay_text != "":
+            draw = ImageDraw.Draw(img)
+            try:
+                font = ImageFont.truetype("arial.ttf", 36)
+            except IOError:
+                font = ImageFont.load_default()
 
-        # Preserve format if possible, otherwise fallback to JPEG
+            x, y = 20, 20
+            # Black shadow for readability
+            draw.text((x + 2, y + 2), overlay_text, font=font, fill="black")
+            # White text on top
+            draw.text((x, y), overlay_text, font=font, fill="white")
+
+        # --- Save compressed ---
+        buf = io.BytesIO()
         if img.format == "JPEG":
             img.save(
                 buf, format="JPEG", quality=quality, optimize=True, progressive=True
@@ -136,7 +160,6 @@ def resize_and_compress(path: str, quality: int = 75) -> io.BytesIO:
         elif img.format == "PNG":
             img.save(buf, format="PNG", optimize=True)
         else:
-            # Convert other formats to JPEG
             img.convert("RGB").save(
                 buf, format="JPEG", quality=quality, optimize=True, progressive=True
             )
@@ -353,6 +376,17 @@ def pick_file(base_dir):
     return None
 
 
+def format_date_with_suffix(dt):
+    day = dt.day
+    # Determine suffix
+    if 11 <= day <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    # Format with abbreviated month
+    return f"{day}{suffix} {dt.strftime('%b %Y')}"
+
+
 @app.route("/")
 def index():
     """
@@ -420,7 +454,11 @@ def random_image():
             session["photo_index"],
         )
 
-        buf = resize_and_compress(path)
+        photo_date = get_photo_date(path)
+
+        buf = resize_and_compress(
+            path, format_date_with_suffix(photo_date) if photo_date else "", 50
+        )
         return send_file(buf, mimetype="image/jpeg")
 
     except (OSError, UnidentifiedImageError, ValueError) as e:
