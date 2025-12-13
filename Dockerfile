@@ -26,5 +26,5 @@ RUN mkdir -p /app/photo-storage \
 # Expose Flask/Gunicorn port (default 5000, can be overridden)
 EXPOSE 5050
 
-# Default command: run your start script
-CMD ["bash", "start.sh"]
+# Default command: run your Flask app directly
+CMD ["python3", "app/app.py", "--photos", "/app/photo-storage", "--port", "5050"]
