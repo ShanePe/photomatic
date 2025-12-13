@@ -107,31 +107,40 @@ def reset_on_first_visit():
         session["initialized"] = True
 
 
-def resize_image_if_needed(path: str) -> io.BytesIO:
+def resize_and_compress(path: str, quality: int = 75) -> io.BytesIO:
     """
     Open an image from path. If larger than MAX_WIDTH or MAX_HEIGHT,
-    resize proportionally and return as a BytesIO buffer.
+    resize proportionally. Then compress and return as a BytesIO buffer.
+
+    Args:
+        path: Path to the image file.
+        quality: JPEG quality (1–95). Lower = smaller file, more compression.
+
+    Returns:
+        BytesIO buffer containing the resized/compressed image.
     """
     with Image.open(path) as img:
         width, height = img.size
 
-        # Check if resize is needed
+        # Resize if needed
         if width > MAX_WIDTH or height > MAX_HEIGHT:
-            # Calculate new size preserving aspect ratio
             img.thumbnail((MAX_WIDTH, MAX_HEIGHT), Image.Resampling.LANCZOS)
-            app.logger.info(
-                "Resized image %s from %sx%s to %sx%s",
-                os.path.basename(path),
-                width,
-                height,
-                img.width,
-                img.height,
+
+        buf = io.BytesIO()
+
+        # Preserve format if possible, otherwise fallback to JPEG
+        if img.format == "JPEG":
+            img.save(
+                buf, format="JPEG", quality=quality, optimize=True, progressive=True
+            )
+        elif img.format == "PNG":
+            img.save(buf, format="PNG", optimize=True)
+        else:
+            # Convert other formats to JPEG
+            img.convert("RGB").save(
+                buf, format="JPEG", quality=quality, optimize=True, progressive=True
             )
 
-        # Save to buffer
-        buf = io.BytesIO()
-        # Always save as JPEG for consistency, or use img.format if you want original
-        img.save(buf, format="JPEG")
         buf.seek(0)
         return buf
 
@@ -411,7 +420,7 @@ def random_image():
             session["photo_index"],
         )
 
-        buf = resize_image_if_needed(path)
+        buf = resize_and_compress(path)
         return send_file(buf, mimetype="image/jpeg")
 
     except (OSError, UnidentifiedImageError, ValueError) as e:

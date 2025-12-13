@@ -207,8 +207,8 @@
       function updateDateTime() {
         const now = new Date();
         const timeOptions = {
-          hour: 'numeric',
-          minute: 'numeric',
+          hour: '2-digit', // ensures 12 instead of 0
+          minute: '2-digit',
           hour12: true,
         };
         const dateOptions = {
@@ -217,6 +217,7 @@
           month: 'long',
           day: 'numeric',
         };
+
         document.getElementById('time').textContent = now.toLocaleTimeString(
           [],
           timeOptions
@@ -226,6 +227,7 @@
           dateOptions
         );
       }
+
       updateDateTime();
       setInterval(updateDateTime, 1000);
     </script>
