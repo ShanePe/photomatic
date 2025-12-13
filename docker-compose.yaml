@@ -2,7 +2,9 @@ version: "3.9"
 
 services:
   photomatic:
-    build: .
+    build:
+      context: . 
+      dockerfile: Dockerfile
     container_name: photomatic_app
     network_mode: host
     volumes:
