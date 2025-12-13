@@ -53,6 +53,9 @@ Endpoints:
              - Falls back to random photo if none available.
 """
 
+# pylint: disable=global-statement
+# pylint: disable=broad-except
+
 import argparse
 import io
 import os
@@ -145,23 +148,22 @@ def resize_and_compress(
     # --- Process image ---
     original_size = os.path.getsize(path)
     with Image.open(path) as img:
-        # Fix orientation based on EXIF metadata
+        # Normalize orientation based on EXIF metadata, then drop EXIF
         img = ImageOps.exif_transpose(img)
 
         width, height = img.size
-
         if width > MAX_WIDTH or height > MAX_HEIGHT:
             img.thumbnail((MAX_WIDTH, MAX_HEIGHT), Image.Resampling.LANCZOS)
 
         if overlay_text:
             draw = ImageDraw.Draw(img)
             font = ImageFont.load_default(30)
-
             x, y = 20, 20
             draw.text((x + 2, y + 2), overlay_text, font=font, fill="black")
             draw.text((x, y), overlay_text, font=font, fill="white")
 
         buf = io.BytesIO()
+        # Save without EXIF metadata
         img.convert("RGB").save(
             buf, format="JPEG", quality=quality, optimize=True, progressive=True
         )
@@ -515,7 +517,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def run_app(args):
+def run_app(arguments):
     """
     Configure global settings and run the Flask application.
 
@@ -523,8 +525,8 @@ def run_app(args):
         args (argparse.Namespace): Parsed command-line arguments.
     """
     global PHOTO_ROOT
-    PHOTO_ROOT = args.photos
-    app.run(debug=True, host="0.0.0.0", port=args.port)
+    PHOTO_ROOT = arguments.photos
+    app.run(debug=True, host="0.0.0.0", port=arguments.port)
 
 
 if __name__ == "__main__":
