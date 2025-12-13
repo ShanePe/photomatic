@@ -92,7 +92,7 @@ CACHE_DIR_LOG = os.path.join(app.instance_path, "log")
 BUILDING_CACHE = False
 MAX_WIDTH = 1080
 MAX_HEIGHT = 768
-CACHE_LIMIT = 500  # max number of cached files
+CACHE_LIMIT = 1000  # max number of cached files
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR_PHOTO, exist_ok=True)
