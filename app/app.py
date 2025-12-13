@@ -58,19 +58,20 @@ import io
 import os
 import random
 import logging
-from logging.handlers import TimedRotatingFileHandler
+import hashlib
+from logging.handlers import RotatingFileHandler
 import re
 import datetime
 
 from flask import Flask, render_template, send_file, session, request
-from PIL import Image, ExifTags, UnidentifiedImageError
+from PIL import Image, ExifTags, UnidentifiedImageError, ImageDraw, ImageFont
 from pillow_heif import register_heif_opener
 
 # Configure logging: one file per day
-log_handler = TimedRotatingFileHandler(
-    "slideshow.log", when="midnight", interval=1, backupCount=7, encoding="utf-8"
+log_handler = RotatingFileHandler(
+    "photomatic.log", maxBytes=5 * 1024 * 1024, backupCount=7, encoding="utf-8"
 )
-log_handler.suffix = "%Y-%m-%d"  # adds date to filename
+
 formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
 log_handler.setFormatter(formatter)
 
@@ -91,10 +92,15 @@ CACHE_DATE = None
 
 # Cache directory is inside the app's instance_path (writable area for the app)
 CACHE_DIR = os.path.join(app.instance_path, "photo_cache")
-os.makedirs(CACHE_DIR, exist_ok=True)
+CACHE_DIR_PHOTO = os.path.join(CACHE_DIR, "photos")
+
 BUILDING_CACHE = False
-MAX_WIDTH = 2048
-MAX_HEIGHT = 1600
+MAX_WIDTH = 1080
+MAX_HEIGHT = 768
+CACHE_LIMIT = 500  # max number of cached files
+
+os.makedirs(CACHE_DIR, exist_ok=True)
+os.makedirs(CACHE_DIR_PHOTO, exist_ok=True)
 
 
 @app.before_request
@@ -107,65 +113,83 @@ def reset_on_first_visit():
         session["initialized"] = True
 
 
-import io
-from PIL import Image, ImageDraw, ImageFont
-
-MAX_WIDTH = 2048
-MAX_HEIGHT = 1600
-
-
 def resize_and_compress(
     path: str, overlay_text: str = "", quality: int = 75
 ) -> io.BytesIO:
     """
-    Open an image from path. If larger than MAX_WIDTH or MAX_HEIGHT,
-    resize proportionally. Optionally overlay text (e.g. date) in the
-    top-left corner. Then compress and return as a BytesIO buffer.
-
-    Args:
-        path: Path to the image file.
-        overlay_text: Optional string to overlay (e.g. '2025-12-13').
-        quality: JPEG quality (1–95). Lower = smaller file, more compression.
-
-    Returns:
-        BytesIO buffer containing the resized/compressed image.
+    Resize/compress image with optional overlay text, using local cache.
+    Logs original vs compressed file size.
     """
+    key_string = f"{path}|{overlay_text}|{quality}"
+    key_hash = hashlib.md5(key_string.encode()).hexdigest()
+    cache_file = os.path.join(CACHE_DIR_PHOTO, f"{key_hash}.jpg")
+
+    # --- Check cache ---
+    if os.path.exists(cache_file):
+        with open(cache_file, "rb") as f:
+            buf = io.BytesIO(f.read())
+            buf.seek(0)
+        logger.info(
+            "Cache hit for %s (size %.1f KB)", path, os.path.getsize(cache_file) / 1024
+        )
+        return buf
+
+    # --- Process image ---
+    original_size = os.path.getsize(path)
     with Image.open(path) as img:
         width, height = img.size
 
-        # Resize if needed
         if width > MAX_WIDTH or height > MAX_HEIGHT:
             img.thumbnail((MAX_WIDTH, MAX_HEIGHT), Image.Resampling.LANCZOS)
 
-        # --- Overlay text if provided ---
-        if overlay_text != "":
+        if overlay_text:
             draw = ImageDraw.Draw(img)
-            try:
-                font = ImageFont.truetype("arial.ttf", 36)
-            except IOError:
-                font = ImageFont.load_default()
+            font = ImageFont.load_default(30)
 
             x, y = 20, 20
-            # Black shadow for readability
             draw.text((x + 2, y + 2), overlay_text, font=font, fill="black")
-            # White text on top
             draw.text((x, y), overlay_text, font=font, fill="white")
 
-        # --- Save compressed ---
         buf = io.BytesIO()
-        if img.format == "JPEG":
-            img.save(
-                buf, format="JPEG", quality=quality, optimize=True, progressive=True
-            )
-        elif img.format == "PNG":
-            img.save(buf, format="PNG", optimize=True)
-        else:
-            img.convert("RGB").save(
-                buf, format="JPEG", quality=quality, optimize=True, progressive=True
-            )
-
+        img.convert("RGB").save(
+            buf, format="JPEG", quality=quality, optimize=True, progressive=True
+        )
         buf.seek(0)
-        return buf
+
+        # Save to cache
+        with open(cache_file, "wb") as f:
+            f.write(buf.getvalue())
+
+    compressed_size = os.path.getsize(cache_file)
+
+    # --- Log sizes ---
+    logger.info(
+        "Processed %s | Original: %.1f KB | Compressed: %.1f KB | Overlay: %s",
+        os.path.basename(path),
+        original_size / 1024,
+        compressed_size / 1024,
+        overlay_text or "None",
+    )
+
+    # --- Enforce cache limit ---
+    cached_files = sorted(
+        (
+            (os.path.getmtime(f), f)
+            for f in [
+                os.path.join(CACHE_DIR_PHOTO, fn) for fn in os.listdir(CACHE_DIR_PHOTO)
+            ]
+        ),
+        key=lambda x: x[0],
+    )
+    if len(cached_files) > CACHE_LIMIT:
+        for _, f in cached_files[:-CACHE_LIMIT]:
+            try:
+                os.remove(f)
+                logger.info("Cache pruned: removed %s", f)
+            except OSError:
+                logger.warning("Failed to remove cache file %s", f)
+
+    return buf
 
 
 def convert_heic_to_jpg(heic_path):
@@ -179,10 +203,10 @@ def convert_heic_to_jpg(heic_path):
         buf.seek(0)
         return buf
     except UnidentifiedImageError as e:
-        app.logger.error("Cannot identify HEIC image %s: %s", heic_path, e)
+        logger.error("Cannot identify HEIC image %s: %s", heic_path, e)
         raise
     except OSError as e:
-        app.logger.error("I/O error converting HEIC %s: %s", heic_path, e)
+        logger.error("I/O error converting HEIC %s: %s", heic_path, e)
         raise
 
 
@@ -195,14 +219,14 @@ def parse_date_from_filename(filename):
         try:
             return datetime.date(int(m1.group(1)), int(m1.group(2)), int(m1.group(3)))
         except ValueError as e:
-            app.logger.error("Invalid YYYYMMDD in filename %s: %s", filename, e)
+            logger.error("Invalid YYYYMMDD in filename %s: %s", filename, e)
 
     m2 = re.search(r"(\d{4})-(\d{2})-(\d{2})", filename)
     if m2:
         try:
             return datetime.date(int(m2.group(1)), int(m2.group(2)), int(m2.group(3)))
         except ValueError as e:
-            app.logger.error("Invalid YYYY-MM-DD in filename %s: %s", filename, e)
+            logger.error("Invalid YYYY-MM-DD in filename %s: %s", filename, e)
 
     return None
 
@@ -227,17 +251,17 @@ def get_photo_date(path):
                         dt = datetime.datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
                         return dt.date()
                     except ValueError as e:
-                        app.logger.error("Bad EXIF date in %s: %s", path, e)
+                        logger.error("Bad EXIF date in %s: %s", path, e)
     except UnidentifiedImageError as e:
-        app.logger.error("Cannot identify image %s: %s", path, e)
+        logger.error("Cannot identify image %s: %s", path, e)
     except OSError as e:
-        app.logger.error("I/O error reading %s: %s", path, e)
+        logger.error("I/O error reading %s: %s", path, e)
 
     try:
         ts = os.path.getmtime(path)
         return datetime.date.fromtimestamp(ts)
     except OSError as e:
-        app.logger.error("File timestamp read failed for %s: %s", path, e)
+        logger.error("File timestamp read failed for %s: %s", path, e)
 
     return None
 
@@ -423,46 +447,45 @@ def random_image():
         if not path:
             return "No images found", 404
 
-        # Gather metadata
-        file_size = os.path.getsize(path)
-        mime_type = (
-            "image/jpeg"
-            if path.lower().endswith((".jpg", ".jpeg", ".heic"))
-            else "image/png"
-        )
         client_ip = request.remote_addr
         user_agent = request.headers.get("User-Agent")
 
+        photo_date = get_photo_date(path)
+
+        # --- Process into buffer ---
+        buf = resize_and_compress(
+            path, format_date_with_suffix(photo_date) if photo_date else "", 50
+        )
+
+        # --- Gather metadata about buf ---
+        compressed_size = len(buf.getvalue())  # size in bytes
         width, height = None, None
         try:
-            with Image.open(path) as img:
+            with Image.open(buf) as img:
                 width, height = img.size
+                mime_type = img.get_format_mimetype() or "image/jpeg"
+            buf.seek(0)
         except Exception:
-            pass
+            mime_type = "image/jpeg"
 
-        # Log details
-        app.logger.info(
-            "Served image: %s | Size: %.1f KB | Dimensions: %sx%s | MIME: %s | "
+        # --- Log details about returned buffer ---
+        logger.info(
+            "Served buffer from %s | Compressed size: %.1f KB | Dimensions: %sx%s | MIME: %s | "
             "Client IP: %s | UA: %s | Photo index: %s",
             os.path.basename(path),
-            file_size / 1024,
+            compressed_size / 1024,
             width,
             height,
             mime_type,
             client_ip,
             user_agent,
-            session["photo_index"],
+            session.get("photo_index"),
         )
 
-        photo_date = get_photo_date(path)
-
-        buf = resize_and_compress(
-            path, format_date_with_suffix(photo_date) if photo_date else "", 50
-        )
         return send_file(buf, mimetype="image/jpeg")
 
     except (OSError, UnidentifiedImageError, ValueError) as e:
-        app.logger.error("Error serving image: %s", e)
+        logger.error("Error serving image: %s", e)
         return f"Error: {e}", 500
 
 
