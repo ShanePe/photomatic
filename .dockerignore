@@ -1,0 +1,37 @@
+# Ignore Python cache and build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+build/
+dist/
+
+# Ignore virtual environments
+venv/
+.env/
+.venv/
+
+# Ignore Docker-related files
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Ignore Git and editor files
+.git/
+.gitignore
+*.swp
+*.swo
+*.bak
+*.tmp
+*.log
+
+# Ignore local instance data (but keep volume mapping)
+instance/cache/
+instance/log/
+photo-storage/
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db

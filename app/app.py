@@ -67,20 +67,11 @@ from flask import Flask, render_template, send_file, session, request
 from PIL import Image, ExifTags, UnidentifiedImageError, ImageDraw, ImageFont
 from pillow_heif import register_heif_opener
 
-# Configure logging: one file per day
-log_handler = RotatingFileHandler(
-    "photomatic.log", maxBytes=5 * 1024 * 1024, backupCount=7, encoding="utf-8"
-)
-
-formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-log_handler.setFormatter(formatter)
-
-logger = logging.getLogger("slideshow")
-logger.setLevel(logging.INFO)
-logger.addHandler(log_handler)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_DIR = os.path.join(BASE_DIR, "..", "templates")
 
 # Initialize Flask app
-app = Flask(__name__)
+app = Flask(__name__, template_folder=TEMPLATE_DIR)
 app.secret_key = "replace_with_a_secure_random_key"  # required for session handling
 
 # Register HEIF opener so Pillow can read HEIC files
@@ -91,8 +82,9 @@ PHOTO_ROOT = None
 CACHE_DATE = None
 
 # Cache directory is inside the app's instance_path (writable area for the app)
-CACHE_DIR = os.path.join(app.instance_path, "photo_cache")
+CACHE_DIR = os.path.join(app.instance_path, "cache")
 CACHE_DIR_PHOTO = os.path.join(CACHE_DIR, "photos")
+CACHE_DIR_LOG = os.path.join(app.instance_path, "log")
 
 BUILDING_CACHE = False
 MAX_WIDTH = 1080
@@ -101,6 +93,22 @@ CACHE_LIMIT = 500  # max number of cached files
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR_PHOTO, exist_ok=True)
+os.makedirs(CACHE_DIR_LOG, exist_ok=True)
+
+# Configure logging: one file per day
+log_handler = RotatingFileHandler(
+    os.path.join(CACHE_DIR_LOG, "photomatic.log"),
+    maxBytes=5 * 1024 * 1024,
+    backupCount=7,
+    encoding="utf-8",
+)
+
+formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+log_handler.setFormatter(formatter)
+
+logger = logging.getLogger("slideshow")
+logger.setLevel(logging.INFO)
+logger.addHandler(log_handler)
 
 
 @app.before_request
