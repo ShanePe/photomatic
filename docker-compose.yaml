@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  photomatic:
+    build: .
+    container_name: photomatic_app
+    ports:
+      - "5050:5050"
+    volumes:
+      # Persist logs and cache
+      - ./instance:/app/instance
+      # Persist photo storage
+      - ./photo-storage:/app/photo-storage
+    environment:
+      # Example environment variables (add your own as needed)
+      FLASK_ENV: production
+      PORT: 5050
+    restart: unless-stopped
