@@ -90,13 +90,21 @@ CACHE_DIR_PHOTO = os.path.join(CACHE_DIR, "photos")
 CACHE_DIR_LOG = os.path.join(app.instance_path, "log")
 
 BUILDING_CACHE = False
-MAX_WIDTH = 1080
+MAX_WIDTH = 2080
 MAX_HEIGHT = 768
-CACHE_LIMIT = 1000  # max number of cached files
+CACHE_LIMIT = 2000  # max number of cached files
+CACHE_COUNT = 0
+SAME_DAY_KEYS = []
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR_PHOTO, exist_ok=True)
 os.makedirs(CACHE_DIR_LOG, exist_ok=True)
+
+CACHE_COUNT = sum(
+    1
+    for entry in os.listdir(CACHE_DIR_PHOTO)
+    if os.path.isfile(os.path.join(CACHE_DIR_PHOTO, entry))
+)
 
 # Configure logging: one file per day
 log_handler = RotatingFileHandler(
@@ -131,8 +139,9 @@ def resize_and_compress(
     Resize/compress image with optional overlay text, using local cache.
     Logs original vs compressed file size.
     """
-    key_string = f"{path}|{overlay_text}|{quality}"
-    key_hash = hashlib.md5(key_string.encode()).hexdigest()
+    global CACHE_COUNT
+
+    key_hash = hashlib.md5(path.encode()).hexdigest()
     cache_file = os.path.join(CACHE_DIR_PHOTO, f"{key_hash}.jpg")
 
     # --- Check cache ---
@@ -173,6 +182,8 @@ def resize_and_compress(
         with open(cache_file, "wb") as f:
             f.write(buf.getvalue())
 
+        CACHE_COUNT = CACHE_COUNT + 1
+
     compressed_size = os.path.getsize(cache_file)
 
     # --- Log sizes ---
@@ -185,24 +196,42 @@ def resize_and_compress(
     )
 
     # --- Enforce cache limit ---
-    cached_files = sorted(
-        (
-            (os.path.getmtime(f), f)
-            for f in [
-                os.path.join(CACHE_DIR_PHOTO, fn) for fn in os.listdir(CACHE_DIR_PHOTO)
-            ]
-        ),
-        key=lambda x: x[0],
-    )
-    if len(cached_files) > CACHE_LIMIT:
-        for _, f in cached_files[:-CACHE_LIMIT]:
+    prune_cache()
+
+    return buf
+
+
+def prune_cache():
+    global CACHE_COUNT
+    # --- Enforce cache limit ---
+    if CACHE_COUNT > CACHE_LIMIT:
+        cached_files = sorted(
+            (
+                (os.path.getmtime(f), f)
+                for f in [
+                    os.path.join(CACHE_DIR_PHOTO, fn)
+                    for fn in os.listdir(CACHE_DIR_PHOTO)
+                ]
+            ),
+            key=lambda x: x[0],
+        )
+
+        for _, f in cached_files:
             try:
+                if CACHE_COUNT <= CACHE_LIMIT:
+                    break
+
+                # Skip removal if this cache file corresponds to a same-day photo
+                # We check by hash: the cache filename is md5(path|overlay|quality).jpg
+                if os.path.basename(f).replace(".jpg", "") in SAME_DAY_KEYS:
+                    logger.info("Cache retained (same-day): %s", f)
+                    continue
+
                 os.remove(f)
+                CACHE_COUNT -= 1
                 logger.info("Cache pruned: removed %s", f)
             except OSError:
                 logger.warning("Failed to remove cache file %s", f)
-
-    return buf
 
 
 def convert_heic_to_jpg(heic_path):
@@ -295,9 +324,12 @@ def build_cache(base_dir):
     """
     global CACHE_DATE
     global BUILDING_CACHE
+    global SAME_DAY_KEYS
 
     CACHE_DATE = None
     BUILDING_CACHE = True
+    SAME_DAY_KEYS.clear()
+
     try:
         today = datetime.date.today()
         extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic")
@@ -322,6 +354,8 @@ def build_cache(base_dir):
                             and photo_date.day == today.day
                         ):
                             f_same.write(path + "\n")
+                            key_hash = hashlib.md5(path.encode()).hexdigest()
+                            SAME_DAY_KEYS.append(key_hash)
                         else:
                             f_all.write(path + "\n")
 
@@ -526,6 +560,11 @@ def run_app(arguments):
     """
     global PHOTO_ROOT
     PHOTO_ROOT = arguments.photos
+
+    if CACHE_COUNT > CACHE_LIMIT:
+        print(f"Initial cache count: {CACHE_COUNT}, pruning to limit {CACHE_LIMIT}")
+        prune_cache(50)  # initial prune at default quality
+
     app.run(debug=True, host="0.0.0.0", port=arguments.port)
 
 
