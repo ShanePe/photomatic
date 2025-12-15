@@ -562,8 +562,10 @@ def run_app(arguments):
     PHOTO_ROOT = arguments.photos
 
     if CACHE_COUNT > CACHE_LIMIT:
-        print(f"Initial cache count: {CACHE_COUNT}, pruning to limit {CACHE_LIMIT}")
-        prune_cache(50)  # initial prune at default quality
+        logger.info(
+            "Initial cache count: %s, pruning to limit %s", CACHE_COUNT, CACHE_LIMIT
+        )
+        prune_cache()  # initial prune at default quality
 
     app.run(debug=True, host="0.0.0.0", port=arguments.port)
 
