@@ -211,7 +211,9 @@ def prune_cache():
                 for f in [
                     os.path.join(CACHE_DIR_PHOTO, fn)
                     for fn in os.listdir(CACHE_DIR_PHOTO)
+                    if not fn.startswith(".")  # exclude hidden files/paths
                 ]
+                if os.path.isfile(f)  # ensure it's a file, not a directory
             ),
             key=lambda x: x[0],
         )
