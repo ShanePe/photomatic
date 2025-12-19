@@ -57,6 +57,7 @@ Endpoints:
 # pylint: disable=broad-except
 
 import argparse
+import heapq
 import io
 import os
 import random
@@ -103,8 +104,10 @@ os.makedirs(CACHE_DIR_LOG, exist_ok=True)
 CACHE_COUNT = sum(
     1
     for entry in os.listdir(CACHE_DIR_PHOTO)
-    if os.path.isfile(os.path.join(CACHE_DIR_PHOTO, entry))
+    if not entry.startswith(".")  # exclude hidden files/paths
+    and os.path.isfile(os.path.join(CACHE_DIR_PHOTO, entry))
 )
+
 
 # Configure logging: one file per day
 log_handler = RotatingFileHandler(
@@ -202,38 +205,57 @@ def resize_and_compress(
 
 
 def prune_cache():
+    """
+    Prune the photo cache directory so that the total number of cached files
+    does not exceed CACHE_LIMIT.
+
+    This function uses a memory‑efficient min‑heap to identify and remove the
+    oldest cache files first. It avoids loading or sorting the entire directory
+    contents, making it significantly faster and more scalable for large caches.
+
+    Behaviour:
+        - Hidden files (starting with ".") are ignored.
+        - Only regular files are considered.
+        - Files whose hash keys appear in SAME_DAY_KEYS are preserved.
+        - Oldest files are removed first until CACHE_COUNT <= CACHE_LIMIT.
+
+    Globals modified:
+        CACHE_COUNT (decremented as files are removed)
+    """
     global CACHE_COUNT
-    # --- Enforce cache limit ---
-    if CACHE_COUNT > CACHE_LIMIT:
-        cached_files = sorted(
-            (
-                (os.path.getmtime(f), f)
-                for f in [
-                    os.path.join(CACHE_DIR_PHOTO, fn)
-                    for fn in os.listdir(CACHE_DIR_PHOTO)
-                    if not fn.startswith(".")  # exclude hidden files/paths
-                ]
-                if os.path.isfile(f)  # ensure it's a file, not a directory
-            ),
-            key=lambda x: x[0],
-        )
 
-        for _, f in cached_files:
-            try:
-                if CACHE_COUNT <= CACHE_LIMIT:
-                    break
+    if CACHE_COUNT <= CACHE_LIMIT:
+        return
 
-                # Skip removal if this cache file corresponds to a same-day photo
-                # We check by hash: the cache filename is md5(path|overlay|quality).jpg
-                if os.path.basename(f).replace(".jpg", "") in SAME_DAY_KEYS:
-                    logger.info("Cache retained (same-day): %s", f)
-                    continue
+    heap = []  # min‑heap of (mtime, filepath)
 
-                os.remove(f)
-                CACHE_COUNT -= 1
-                logger.info("Cache pruned: removed %s", f)
-            except OSError:
-                logger.warning("Failed to remove cache file %s", f)
+    # Build heap without loading everything into memory
+    for fn in os.listdir(CACHE_DIR_PHOTO):
+        if fn.startswith("."):
+            continue
+
+        f = os.path.join(CACHE_DIR_PHOTO, fn)
+        if not os.path.isfile(f):
+            continue
+
+        mtime = os.path.getmtime(f)
+        heapq.heappush(heap, (mtime, f))
+
+    # Pop oldest files until under limit
+    while CACHE_COUNT > CACHE_LIMIT and heap:
+        mtime, f = heapq.heappop(heap)
+
+        key = os.path.basename(f).replace(".jpg", "")
+        if key in SAME_DAY_KEYS:
+            logger.info("Cache retained (same-day): %s", f)
+            continue
+
+        try:
+            os.remove(f)
+            CACHE_COUNT -= 1
+            logger.info("Cache pruned: removed %s", f)
+        except OSError:
+            logger.warning("Failed to remove cache file %s", f)
 
 
 def convert_heic_to_jpg(heic_path):
