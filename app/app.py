@@ -97,7 +97,7 @@ MAX_HEIGHT = 768
 CACHE_LIMIT = 2000  # max number of cached files
 CACHE_COUNT = 0
 SAME_DAY_KEYS = []
-SAME_DAY_CYCLE = 0
+SAME_DAY_CYCLE = 100
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR_PHOTO, exist_ok=True)
@@ -389,7 +389,6 @@ def build_cache(base_dir):
                         else:
                             f_all.write(path + "\n")
 
-        session["photo_index"] = 0
         CACHE_DATE = today
     finally:
         BUILDING_CACHE = False
