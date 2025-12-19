@@ -1,0 +1,6 @@
+cache:
+  limit: 2000
+  cycle: 100
+image:
+  max_width: 2080
+  max_height: 768

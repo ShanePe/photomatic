@@ -71,6 +71,7 @@ import datetime
 from flask import Flask, render_template, send_file, session, request
 from PIL import Image, ExifTags, UnidentifiedImageError, ImageDraw, ImageFont, ImageOps
 from pillow_heif import register_heif_opener
+from config_manager import load_config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(BASE_DIR, "..", "templates")
@@ -91,13 +92,17 @@ CACHE_DIR = os.path.join(app.instance_path, "cache")
 CACHE_DIR_PHOTO = os.path.join(CACHE_DIR, "photos")
 CACHE_DIR_LOG = os.path.join(app.instance_path, "log")
 
+CONFIG = load_config()
+
+MAX_WIDTH = CONFIG["image"]["max_width"]
+MAX_HEIGHT = CONFIG["image"]["max_height"]
+
+CACHE_LIMIT = CONFIG["cache"]["limit"]
+SAME_DAY_CYCLE = CONFIG["cache"]["same_day_cycle"]
+
 BUILDING_CACHE = False
-MAX_WIDTH = 2080
-MAX_HEIGHT = 768
-CACHE_LIMIT = 2000  # max number of cached files
 CACHE_COUNT = 0
 SAME_DAY_KEYS = []
-SAME_DAY_CYCLE = 100
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR_PHOTO, exist_ok=True)
