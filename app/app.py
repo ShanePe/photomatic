@@ -528,10 +528,6 @@ def random_image():
         if BUILDING_CACHE:
             return "Cache is being built, please try again shortly.", 503
 
-        if session.get("photo_served", 0) > SAME_DAY_CYCLE:
-            session["photo_index"] = 0
-            session["photo_served"] = 0
-
         path = pick_file(PHOTO_ROOT)
         if not path:
             return "No images found", 404
@@ -558,6 +554,10 @@ def random_image():
             mime_type = "image/jpeg"
 
         session["photo_served"] = session.get("photo_served", 0) + 1
+
+        if session.get("photo_served", 0) > SAME_DAY_CYCLE:
+            session["photo_index"] = 0
+            session["photo_served"] = 0
 
         # --- Log details about returned buffer ---
         logger.info(
