@@ -383,6 +383,7 @@ def build_cache(base_dir):
                         else:
                             f_all.write(path + "\n")
 
+        session["photo_index"] = 0
         CACHE_DATE = today
     finally:
         BUILDING_CACHE = False
