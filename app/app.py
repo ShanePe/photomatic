@@ -55,6 +55,7 @@ Endpoints:
 
 # pylint: disable=global-statement
 # pylint: disable=broad-except
+# pylint: disable=global-variable-not-assigned
 
 import argparse
 import heapq
@@ -96,6 +97,7 @@ MAX_HEIGHT = 768
 CACHE_LIMIT = 2000  # max number of cached files
 CACHE_COUNT = 0
 SAME_DAY_KEYS = []
+SAME_DAY_CYCLE = 0
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR_PHOTO, exist_ok=True)
@@ -127,11 +129,15 @@ logger.addHandler(log_handler)
 
 @app.before_request
 def reset_on_first_visit():
+    """
+    Reset session state on first visit.
+    """
     # If this is a brand new session (no cookie yet)
     if "initialized" not in session:
         # Reset your slideshow index
         session.clear()
         session["photo_index"] = 0
+        session["photo_served"] = 0
         session["initialized"] = True
 
 
@@ -473,6 +479,9 @@ def pick_file(base_dir):
 
 
 def format_date_with_suffix(dt):
+    """
+    Format a date with ordinal suffix (e.g., "1st Jan 2020").
+    """
     day = dt.day
     # Determine suffix
     if 11 <= day <= 13:
@@ -515,6 +524,10 @@ def random_image():
         if BUILDING_CACHE:
             return "Cache is being built, please try again shortly.", 503
 
+        if session.get("photo_served", 0) > SAME_DAY_CYCLE:
+            session["photo_index"] = 0
+            session["photo_served"] = 0
+
         path = pick_file(PHOTO_ROOT)
         if not path:
             return "No images found", 404
@@ -540,10 +553,12 @@ def random_image():
         except Exception:
             mime_type = "image/jpeg"
 
+        session["photo_served"] = session.get("photo_served", 0) + 1
+
         # --- Log details about returned buffer ---
         logger.info(
             "Served buffer from %s | Compressed size: %.1f KB | Dimensions: %sx%s | MIME: %s | "
-            "Client IP: %s | UA: %s | Photo index: %s",
+            "Client IP: %s | UA: %s | Photo index: %s : Photo served: %s",
             os.path.basename(path),
             compressed_size / 1024,
             width,
@@ -552,6 +567,7 @@ def random_image():
             client_ip,
             user_agent,
             session.get("photo_index"),
+            session.get("photo_served"),
         )
 
         return send_file(buf, mimetype="image/jpeg")
