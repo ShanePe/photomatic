@@ -17,9 +17,9 @@ from .cache_manager import prune_cache
 
 def resize_and_compress(
     path: str,
-    overlay_text: str = "",
+    top_left_text: str = "",
     quality: int = 75,
-    bottom_right_text: str = "",
+    top_right_text: str = "",
 ) -> io.BytesIO:
     """
     Resize/compress image with optional overlay text, using local cache.
@@ -41,8 +41,8 @@ def resize_and_compress(
     original_size = os.path.getsize(path)
 
     # Default bottom-right text to the file's base name when not provided
-    if not bottom_right_text:
-        bottom_right_text = os.path.basename(path)
+    if not top_right_text:
+        top_right_text = os.path.basename(path)
     with Image.open(path) as img:
         img = ImageOps.exif_transpose(img)
 
@@ -55,26 +55,26 @@ def resize_and_compress(
 
         draw = None
         font = None
-        if overlay_text or bottom_right_text:
+        if top_left_text or top_right_text:
             draw = ImageDraw.Draw(img)
             font = ImageFont.load_default()
 
-        if overlay_text and draw:
+        if top_left_text and draw:
             x, y = 20, 20
             # drop shadow then white text
-            draw.text((x + 2, y + 2), overlay_text, font=font, fill="black")
-            draw.text((x, y), overlay_text, font=font, fill="white")
+            draw.text((x + 2, y + 2), top_left_text, font=font, fill="black")
+            draw.text((x, y), top_left_text, font=font, fill="white")
 
-        if bottom_right_text and draw:
+        if top_right_text and draw:
             # measure text size using textbbox
-            bbox = draw.textbbox((0, 0), bottom_right_text, font=font)
+            bbox = draw.textbbox((0, 0), top_right_text, font=font)
             tw = bbox[2] - bbox[0]
             th = bbox[3] - bbox[1]
 
             br_x = max(10, width - tw - 20)
-            br_y = max(10, height - th - 20)
-            draw.text((br_x + 2, br_y + 2), bottom_right_text, font=font, fill="black")
-            draw.text((br_x, br_y), bottom_right_text, font=font, fill="white")
+            br_y = 20
+            draw.text((br_x + 2, br_y + 2), top_right_text, font=font, fill="black")
+            draw.text((br_x, br_y), top_right_text, font=font, fill="white")
 
         buf = io.BytesIO()
         img.convert("RGB").save(
@@ -96,7 +96,7 @@ def resize_and_compress(
         os.path.basename(path),
         original_size / 1024,
         compressed_size / 1024,
-        overlay_text or "None",
+        top_left_text or "None",
     )
 
     prune_cache()

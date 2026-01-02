@@ -24,7 +24,7 @@ def test_resize_and_compress_creates_cache(tmp_path):
     os.makedirs(G.CACHE_DIR_PHOTO, exist_ok=True)
 
     buf = image_utils.resize_and_compress(
-        str(img_path), overlay_text="Top", bottom_right_text="BR"
+        str(img_path), top_left_text="Top", top_right_text="BR"
     )
     data = buf.getvalue()
     # JPEG files start with 0xFF 0xD8
