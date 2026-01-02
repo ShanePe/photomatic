@@ -69,7 +69,6 @@ def resize_and_compress(
             # measure text size using textbbox
             bbox = draw.textbbox((0, 0), top_right_text, font=font)
             tw = bbox[2] - bbox[0]
-            th = bbox[3] - bbox[1]
 
             br_x = max(10, width - tw - 20)
             br_y = 20
