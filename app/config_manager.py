@@ -1,5 +1,13 @@
-import yaml
+"""Configuration loader for Photomatic.
+
+Provides `DEFAULT_CONFIG` and a safe `load_config()` helper that merges
+`config.yaml` values into defaults while ignoring unknown keys. Other
+modules import this at startup to obtain runtime settings.
+"""
+
 import os
+
+import yaml
 
 DEFAULT_CONFIG = {
     "image": {

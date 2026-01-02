@@ -31,4 +31,4 @@ done
 echo "Starting Photomatic with photos dir: $PHOTOS_DIR on port: $PORT"
 
 # Run Flask app directly (no venv needed in Docker)
-exec python3 app/app.py --photos "$PHOTOS_DIR" --port "$PORT"
+exec python3 -m app.app --photos "$PHOTOS_DIR" --port "$PORT"
