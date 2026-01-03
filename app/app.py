@@ -69,7 +69,12 @@ def random_image():
         photo_date = get_photo_date(path)
 
         buf = resize_and_compress(
-            path, format_date_with_suffix(photo_date) if photo_date else "", 50
+            path,
+            {
+                "top_left": format_date_with_suffix(photo_date) if photo_date else "",
+                "top_right": os.path.basename(path),
+            },
+            50,
         )
 
         compressed_size = len(buf.getvalue())
