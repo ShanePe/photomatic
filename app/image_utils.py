@@ -5,19 +5,14 @@ resizing to configured limits, drawing optional overlay text, and
 writing/reading cached JPEGs under the Flask instance cache directory.
 """
 
+import hashlib
 import io
 import os
-import hashlib
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from . import globals as G
 from .cache_manager import prune_cache
-
-import io
-import os
-import hashlib
-from PIL import Image, ImageOps, ImageDraw, ImageFont
 
 
 def draw_text(draw, font, text, x, y):

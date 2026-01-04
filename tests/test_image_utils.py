@@ -24,8 +24,9 @@ def test_resize_and_compress_creates_cache(tmp_path):
     os.makedirs(G.CACHE_DIR_PHOTO, exist_ok=True)
 
     buf = image_utils.resize_and_compress(
-        str(img_path), top_left_text="Top", top_right_text="BR"
+        str(img_path), {"top_left": "Test Overlay"}, 80
     )
+
     data = buf.getvalue()
     # JPEG files start with 0xFF 0xD8
     assert data[:2] == b"\xff\xd8"
