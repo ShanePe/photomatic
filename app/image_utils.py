@@ -14,6 +14,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from . import globals as G
 from .cache_manager import prune_cache
 
+FONT_PATH = os.path.join(os.path.dirname(__file__), "assets", "fonts", "DejaVuSans.ttf")
+
 
 def draw_text(draw, font, text, x, y):
     """Draw text with a drop shadow, matching original behaviour."""
@@ -21,38 +23,51 @@ def draw_text(draw, font, text, x, y):
     draw.text((x, y), text, font=font, fill="white")  # foreground
 
 
+def load_scaled_font(height, scale=0.01):
+    """Load a truetype font scaled to image height."""
+    font_size = max(12, int(height * scale))
+
+    try:
+        return ImageFont.truetype(FONT_PATH, font_size)
+    except OSError:
+        return ImageFont.load_default()
+
+
 def apply_overlays(img, overlays: dict[str, str]):
     """Apply overlay text to the four corners of the image."""
     draw = ImageDraw.Draw(img)
-    font = ImageFont.load_default()
     width, height = img.size
+
+    font = load_scaled_font(height, scale=0.01)
 
     for position, text in overlays.items():
         if not text:
             continue
 
-        # Measure text once
+        # Measure text
         bbox = draw.textbbox((0, 0), text, font=font)
         tw = bbox[2] - bbox[0]
         th = bbox[3] - bbox[1]
 
+        padding = int(height * 0.02)  # scale padding too
+
         if position == "top_left":
-            x, y = 20, 20
+            x, y = padding, padding
 
         elif position == "top_right":
-            x = width - tw - 20
-            y = 20
+            x = width - tw - padding
+            y = padding
 
         elif position == "bottom_left":
-            x = 20
-            y = height - th - 20
+            x = padding
+            y = height - th - padding
 
         elif position == "bottom_right":
-            x = width - tw - 20
-            y = height - th - 20
+            x = width - tw - padding
+            y = height - th - padding
 
         else:
-            continue  # ignore unknown keys
+            continue
 
         draw_text(draw, font, text, x, y)
 

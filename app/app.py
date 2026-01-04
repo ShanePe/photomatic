@@ -12,6 +12,7 @@ from .cache_manager import (
     pick_file,
     format_date_with_suffix,
     prune_cache,
+    clear_entire_cache,
 )
 
 
@@ -115,6 +116,30 @@ def random_image():
     except (OSError, UnidentifiedImageError, ValueError) as e:
         G.logger.error("Error serving image: %s", e)
         return f"Error: {e}", 500
+
+
+@G.app.route("/clear_cache")
+def clear_cache():
+    """
+    Clear the on-disk cache unless a build is in progress.
+    """
+    if G.BUILDING_CACHE:
+        return "Cache is currently being built. Try again later.", 503
+
+    try:
+        G.logger.info("Manual cache clear requested by client.")
+
+        clear_entire_cache()
+
+        # Optional: reset session counters too
+        session["photo_index"] = 0
+        session["photo_served"] = 0
+
+        return "Cache cleared.", 200
+
+    except Exception as e:
+        G.logger.error("Error clearing cache: %s", e)
+        return f"Error clearing cache: {e}", 500
 
 
 def parse_args():

@@ -233,3 +233,62 @@ def format_date_with_suffix(dt):
     else:
         suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
     return f"{day}{suffix} {dt.strftime('%b %Y')}"
+
+
+def clear_entire_cache():
+    """
+    Completely clear all cached JPEGs and cache text files.
+
+    Removes:
+      - All files under G.CACHE_DIR_PHOTO
+      - cache_all.txt
+      - cache_same_day.txt
+
+    Resets:
+      - G.CACHE_COUNT
+      - G.SAME_DAY_KEYS
+      - G.CACHE_DATE
+
+    Returns:
+        bool: True if successful, False if errors occurred.
+    """
+    errors = False
+
+    G.logger.info("Full cache clear requested — removing all cached files and indexes.")
+
+    # 1. Remove cached JPEGs
+    try:
+        for fn in os.listdir(G.CACHE_DIR_PHOTO):
+            if fn.startswith("."):
+                continue
+            f = os.path.join(G.CACHE_DIR_PHOTO, fn)
+            if os.path.isfile(f):
+                try:
+                    os.remove(f)
+                    G.logger.info("Removed cached photo: %s", f)
+                except OSError as e:
+                    G.logger.warning("Failed to remove cached photo %s: %s", f, e)
+                    errors = True
+    except FileNotFoundError:
+        G.logger.warning("Cache photo directory missing: %s", G.CACHE_DIR_PHOTO)
+
+    # 2. Remove cache text files
+    for txt in ("cache_all.txt", "cache_same_day.txt"):
+        path = os.path.join(G.CACHE_DIR, txt)
+        try:
+            os.remove(path)
+            G.logger.info("Removed cache index file: %s", path)
+        except FileNotFoundError:
+            G.logger.info("Cache index file not found (already cleared): %s", path)
+        except OSError as e:
+            G.logger.warning("Failed to remove cache index file %s: %s", path, e)
+            errors = True
+
+    # 3. Reset globals
+    G.CACHE_COUNT = 0
+    G.SAME_DAY_KEYS = []
+    G.CACHE_DATE = None
+
+    G.logger.info("Cache fully cleared. CACHE_COUNT reset to 0, SAME_DAY_KEYS emptied.")
+
+    return not errors
