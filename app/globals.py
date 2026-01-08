@@ -39,6 +39,7 @@ SAME_DAY_CYCLE = CONFIG["cache"]["same_day_cycle"]
 # Cache directory is inside the app's instance_path (writable area for the app)
 CACHE_DIR = os.path.join(app.instance_path, "cache")
 CACHE_DIR_PHOTO = os.path.join(CACHE_DIR, "photos")
+CACHE_DIR_ICON = os.path.join(CACHE_DIR, "icons")
 CACHE_DIR_LOG = os.path.join(app.instance_path, "log")
 
 # Cache layout and filenames (must match expectations in app code)
@@ -46,6 +47,7 @@ CACHE_DIR_NAME = "cache"
 CACHE_ALL_FILENAME = "cache_all.txt"
 CACHE_SAME_DAY_FILENAME = "cache_same_day.txt"
 CACHE_PHOTOS_SUBDIR = "photos"
+CACHE_ICONS_SUBDIR = "icons"
 
 # Logging
 LOG_DIR_NAME = "log"
@@ -81,12 +83,14 @@ def ensure_instance_dirs(instance_root):
     root = _normalize_instance_path(instance_root)
     (root / CACHE_DIR_NAME).mkdir(parents=True, exist_ok=True)
     (root / CACHE_DIR_NAME / CACHE_PHOTOS_SUBDIR).mkdir(parents=True, exist_ok=True)
+    (root / CACHE_DIR_NAME / CACHE_ICONS_SUBDIR).mkdir(parents=True, exist_ok=True)
     (root / LOG_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
 
 # Create cache directories
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR_PHOTO, exist_ok=True)
+os.makedirs(CACHE_DIR_ICON, exist_ok=True)
 os.makedirs(CACHE_DIR_LOG, exist_ok=True)
 
 # Configure logging

@@ -2,8 +2,17 @@
 
 import argparse
 import os
-from flask import render_template, send_file, session, request
+from flask import (
+    render_template,
+    send_file,
+    session,
+    request,
+    jsonify,
+    send_from_directory,
+)
 from PIL import Image, UnidentifiedImageError
+import requests
+from urllib.parse import urlparse
 
 from . import globals as G
 from .image_utils import resize_and_compress
@@ -140,6 +149,49 @@ def clear_cache():
     except Exception as e:
         G.logger.error("Error clearing cache: %s", e)
         return f"Error clearing cache: {e}", 500
+
+
+@G.app.route("/cache_icon", methods=["POST"])
+def cache_icon():
+    """ "Fetch and cache an icon from a given URL."""
+    data = request.get_json()
+    full_url = data["url"]
+
+    # Parse URL path: /lucide/cloud.svg
+    parsed = urlparse(full_url)
+    parts = parsed.path.strip("/").split("/")
+
+    if len(parts) < 2:
+        return jsonify({"error": "Invalid icon URL"}), 400
+
+    style = parts[-2]  # "lucide"
+    filename = parts[-1]  # "cloud.svg"
+
+    # Build local cache path
+    style_dir = os.path.join(G.CACHE_DIR_ICON, style)
+    os.makedirs(style_dir, exist_ok=True)
+
+    local_path = os.path.join(style_dir, filename)
+    relative_path = f"/icons/{style}/{filename}"
+
+    # If cached, return immediately
+    if os.path.exists(local_path):
+        return jsonify({"path": relative_path})
+
+    # Download and cache
+    r = requests.get(full_url, timeout=60)
+    if r.status_code == 200:
+        with open(local_path, "wb") as f:
+            f.write(r.content)
+        return jsonify({"path": relative_path})
+    else:
+        return jsonify({"error": "Failed to fetch icon"}), 500
+
+
+@G.app.route("/icons/<style>/<filename>")
+def serve_icon(style, filename):
+    """Serve cached icon files."""
+    return send_from_directory(os.path.join(G.CACHE_DIR_ICON, style), filename)
 
 
 def parse_args():

@@ -67,6 +67,7 @@
       .slide-left {
         transform: translate(-150%, -50%);
       }
+
       .slide-left.show {
         transform: translate(-50%, -50%);
         opacity: 1;
@@ -75,6 +76,7 @@
       .slide-right {
         transform: translate(50%, -50%);
       }
+
       .slide-right.show {
         transform: translate(-50%, -50%);
         opacity: 1;
@@ -83,6 +85,7 @@
       .slide-up {
         transform: translate(-50%, -150%);
       }
+
       .slide-up.show {
         transform: translate(-50%, -50%);
         opacity: 1;
@@ -91,6 +94,7 @@
       .slide-down {
         transform: translate(-50%, 50%);
       }
+
       .slide-down.show {
         transform: translate(-50%, -50%);
         opacity: 1;
@@ -99,6 +103,7 @@
       .rotate {
         transform: translate(-50%, -50%) rotate(-180deg) scale(0.5);
       }
+
       .rotate.show {
         transform: translate(-50%, -50%) rotate(0deg) scale(1);
         opacity: 1;
@@ -129,14 +134,15 @@
 
       /* Weather icon as DIV */
       #weather-icon {
-        width: 100px;
-        height: 100px;
+        width: 60px;
+        height: 60px;
         background-size: contain;
         background-repeat: no-repeat;
         background-position: center;
         display: inline-block;
         filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.7));
         z-index: 5;
+        filter: brightness(0) invert(1);
       }
 
       #weather-temp {
@@ -189,7 +195,142 @@
         'slide-down',
         'rotate',
       ];
+
+      const iconStyles = {
+        meteocons: 'https://api.iconify.design/meteocons/',
+        solar: 'https://api.iconify.design/solar/',
+        phosphor: 'https://api.iconify.design/ph/',
+        material: 'https://api.iconify.design/material-symbols/',
+        linemd: 'https://api.iconify.design/line-md/',
+        wi: 'https://api.iconify.design/wi/',
+        carbon: 'https://api.iconify.design/carbon/',
+        lucide: 'https://api.iconify.design/lucide/',
+      };
+
+      const iconNames = {
+        meteocons: {
+          'clear-day': 'clear-day',
+          'partly-cloudy-day': 'partly-cloudy-day',
+          cloudy: 'cloudy',
+          overcast: 'overcast',
+          fog: 'fog',
+          drizzle: 'drizzle',
+          rain: 'rain',
+          snow: 'snow',
+          thunderstorms: 'thunderstorms',
+        },
+
+        solar: {
+          'clear-day': 'sun-bold',
+          'partly-cloudy-day': 'cloud-sun-bold',
+          cloudy: 'cloud-bold',
+          overcast: 'clouds-bold',
+          fog: 'fog-bold',
+          drizzle: 'cloud-drizzle-bold',
+          rain: 'cloud-rain-bold',
+          snow: 'cloud-snow-bold',
+          thunderstorms: 'cloud-lightning-bold',
+        },
+
+        phosphor: {
+          'clear-day': 'sun-bold',
+          'partly-cloudy-day': 'cloud-sun-bold',
+          cloudy: 'cloud-bold',
+          overcast: 'clouds-bold',
+          fog: 'cloud-fog-bold',
+          drizzle: 'cloud-drizzle-bold',
+          rain: 'cloud-rain-bold',
+          snow: 'cloud-snow-bold',
+          thunderstorms: 'cloud-lightning-bold',
+        },
+
+        material: {
+          'clear-day': 'sunny',
+          'partly-cloudy-day': 'partly-cloudy-day',
+          cloudy: 'cloud',
+          overcast: 'cloud',
+          fog: 'foggy',
+          drizzle: 'rainy',
+          rain: 'rainy',
+          snow: 'weather-snowy',
+          thunderstorms: 'thunderstorm',
+        },
+
+        linemd: {
+          'clear-day': 'sunny',
+          'partly-cloudy-day': 'cloudy-sunny',
+          cloudy: 'cloud',
+          overcast: 'cloud',
+          fog: 'cloud-alt',
+          drizzle: 'cloud-drizzle',
+          rain: 'cloud-rain',
+          snow: 'cloud-snow',
+          thunderstorms: 'cloud-lightning',
+        },
+
+        wi: {
+          'clear-day': 'day-sunny',
+          'partly-cloudy-day': 'day-cloudy',
+          cloudy: 'cloud',
+          overcast: 'cloudy',
+          fog: 'fog',
+          drizzle: 'sprinkle',
+          rain: 'rain',
+          snow: 'snow',
+          thunderstorms: 'thunderstorm',
+        },
+
+        carbon: {
+          'clear-day': 'sun',
+          'partly-cloudy-day': 'partly-cloudy',
+          cloudy: 'cloud',
+          overcast: 'cloud',
+          fog: 'fog',
+          drizzle: 'rain-drizzle',
+          rain: 'rain',
+          snow: 'snow',
+          thunderstorms: 'thunderstorm',
+        },
+
+        lucide: {
+          'clear-day': 'sun',
+          'partly-cloudy-day': 'cloud-sun',
+          cloudy: 'cloud',
+          overcast: 'cloud',
+          fog: 'cloud-fog',
+          drizzle: 'cloud-drizzle',
+          rain: 'cloud-rain',
+          snow: 'snowflake',
+          thunderstorms: 'cloud-lightning',
+        },
+      };
+
+      const weatherMap = {
+        0: 'clear-day',
+        1: 'partly-cloudy-day',
+        2: 'cloudy',
+        3: 'overcast',
+        45: 'fog',
+        48: 'fog',
+        51: 'drizzle',
+        53: 'drizzle',
+        55: 'drizzle',
+        61: 'rain',
+        63: 'rain',
+        65: 'rain',
+        71: 'snow',
+        73: 'snow',
+        75: 'snow',
+        80: 'rain',
+        81: 'rain',
+        82: 'rain',
+        95: 'thunderstorms',
+        96: 'thunderstorms',
+        99: 'thunderstorms',
+      };
+
       let currentBg = 1;
+      let currentStyle = 'lucide'; // change to any pack
 
       async function loadImage() {
         try {
@@ -240,9 +381,6 @@
         }
       }
 
-      loadImage();
-      setInterval(loadImage, 30000);
-
       function updateDateTime() {
         const now = new Date();
         document.getElementById('time').textContent = now.toLocaleTimeString(
@@ -255,13 +393,28 @@
         );
       }
 
-      updateDateTime();
-      setInterval(updateDateTime, 1000);
+      async function getIconUrl(code) {
+        const base = iconStyles[currentStyle];
+        const generic = weatherMap[code] || 'cloudy';
+        const icon = iconNames[currentStyle][generic];
+
+        const response = await fetch('/cache_icon', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: `${base}${icon}.svg` }),
+        });
+
+        const data = await response.json();
+        return `url(${data.path})`;
+      }
 
       async function updateWeather() {
         try {
-          const lat = 53.357;
-          const lon = -6.448;
+          // const lat = 53.342711;
+          // const lon = -6.43189;
+
+          const lat = 53.333;
+          const lon = -6.249;
 
           const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`;
 
@@ -271,37 +424,19 @@
           const temp = Math.round(data.current_weather.temperature);
           const code = data.current_weather.weathercode;
 
-          document.getElementById('weather-temp').textContent = temp + '°C';
-
-          const iconMap = {
-            0: 'https://openweathermap.org/img/wn/01d.png',
-            1: 'https://openweathermap.org/img/wn/02d.png',
-            2: 'https://openweathermap.org/img/wn/03d.png',
-            3: 'https://openweathermap.org/img/wn/04d.png',
-            45: 'https://openweathermap.org/img/wn/50d.png',
-            48: 'https://openweathermap.org/img/wn/50d.png',
-            51: 'https://openweathermap.org/img/wn/09d.png',
-            53: 'https://openweathermap.org/img/wn/09d.png',
-            55: 'https://openweathermap.org/img/wn/09d.png',
-            61: 'https://openweathermap.org/img/wn/10d.png',
-            63: 'https://openweathermap.org/img/wn/10d.png',
-            65: 'https://openweathermap.org/img/wn/10d.png',
-            71: 'https://openweathermap.org/img/wn/13d.png',
-            73: 'https://openweathermap.org/img/wn/13d.png',
-            75: 'https://openweathermap.org/img/wn/13d.png',
-            95: 'https://openweathermap.org/img/wn/11d.png',
-            96: 'https://openweathermap.org/img/wn/11d.png',
-            99: 'https://openweathermap.org/img/wn/11d.png',
-          };
-
-          const iconUrl = iconMap[code] || iconMap[3];
-          document.getElementById(
-            'weather-icon'
-          ).style.backgroundImage = `url(${iconUrl})`;
+          document.getElementById('weather-temp').textContent = temp + '°c';
+          document.getElementById('weather-icon').style.backgroundImage =
+            await getIconUrl(code);
         } catch (err) {
           console.warn('Weather fetch failed:', err);
         }
       }
+
+      loadImage();
+      setInterval(loadImage, 30000);
+
+      updateDateTime();
+      setInterval(updateDateTime, 1000);
 
       updateWeather();
       setInterval(updateWeather, 10 * 60 * 1000);

@@ -12,6 +12,7 @@ import heapq
 import os
 import random
 import re
+import shutil
 
 from flask import session
 from PIL import ExifTags, Image, UnidentifiedImageError
@@ -235,12 +236,30 @@ def format_date_with_suffix(dt):
     return f"{day}{suffix} {dt.strftime('%b %Y')}"
 
 
+def clear_directory(path):
+    """
+    Deletes all files and folders inside the given directory,
+    but leaves the directory itself intact.
+    """
+    if not os.path.isdir(path):
+        raise ValueError(f"Not a directory: {path}")
+
+    for entry in os.listdir(path):
+        full_path = os.path.join(path, entry)
+
+        if os.path.isfile(full_path) or os.path.islink(full_path):
+            os.remove(full_path)
+
+        elif os.path.isdir(full_path):
+            shutil.rmtree(full_path)
+
+
 def clear_entire_cache():
     """
     Completely clear all cached JPEGs and cache text files.
 
     Removes:
-      - All files under G.CACHE_DIR_PHOTO
+      - All files under G.CACHE_DIR_PHOTO G.CACHE_DIR_ICON
       - cache_all.txt
       - cache_same_day.txt
 
@@ -257,20 +276,13 @@ def clear_entire_cache():
     G.logger.info("Full cache clear requested — removing all cached files and indexes.")
 
     # 1. Remove cached JPEGs
-    try:
-        for fn in os.listdir(G.CACHE_DIR_PHOTO):
-            if fn.startswith("."):
-                continue
-            f = os.path.join(G.CACHE_DIR_PHOTO, fn)
-            if os.path.isfile(f):
-                try:
-                    os.remove(f)
-                    G.logger.info("Removed cached photo: %s", f)
-                except OSError as e:
-                    G.logger.warning("Failed to remove cached photo %s: %s", f, e)
-                    errors = True
-    except FileNotFoundError:
-        G.logger.warning("Cache photo directory missing: %s", G.CACHE_DIR_PHOTO)
+    for cache_subdir in (G.CACHE_DIR_PHOTO, G.CACHE_DIR_ICON):
+        try:
+            clear_directory(cache_subdir)
+            G.logger.info("Cleared cache directory: %s", cache_subdir)
+        except OSError as e:
+            G.logger.warning("Failed to clear cache directory %s: %s", cache_subdir, e)
+            errors = True
 
     # 2. Remove cache text files
     for txt in ("cache_all.txt", "cache_same_day.txt"):
