@@ -2,27 +2,28 @@
 
 import argparse
 import os
-from flask import (
-    render_template,
-    send_file,
-    session,
-    request,
-    jsonify,
-    send_from_directory,
-)
-from PIL import Image, UnidentifiedImageError
-import requests
 from urllib.parse import urlparse
 
+import requests
+from flask import (
+    jsonify,
+    render_template,
+    request,
+    send_file,
+    send_from_directory,
+    session,
+)
+from PIL import Image, UnidentifiedImageError
+
 from . import globals as G
-from .image_utils import resize_and_compress
 from .cache_manager import (
+    clear_entire_cache,
+    format_date_with_suffix,
     get_photo_date,
     pick_file,
-    format_date_with_suffix,
     prune_cache,
-    clear_entire_cache,
 )
+from .image_utils import resize_and_compress
 
 
 @G.app.before_request
@@ -38,6 +39,16 @@ def reset_on_first_visit():
         session["photo_index"] = 0
         session["photo_served"] = 0
         session["initialized"] = True
+
+
+@G.app.route("/favicon.ico")
+def favicon():
+    """Serve the favicon.ico file."""
+    return send_from_directory(
+        os.path.join(os.path.dirname(__file__), "assets"),
+        "favicon.ico",
+        mimetype="image/vnd.microsoft.icon",
+    )
 
 
 @G.app.route("/")
@@ -146,7 +157,7 @@ def clear_cache():
 
         return "Cache cleared.", 200
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         G.logger.error("Error clearing cache: %s", e)
         return f"Error clearing cache: {e}", 500
 
