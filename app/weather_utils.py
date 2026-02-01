@@ -1,5 +1,7 @@
 """Weather mapping utilities for standardizing different API responses."""
 
+import time
+
 # Open-Meteo WMO weather codes to standardized condition names
 OPENMETEO_CODE_MAP = {
     0: "clear-day",
@@ -58,6 +60,31 @@ METNO_SYMBOL_MAP = {
 def map_openmeteo_code(code: int) -> str:
     """Map Open-Meteo weather code to standardized condition name."""
     return OPENMETEO_CODE_MAP.get(code, "cloudy")
+
+
+# Weather cache: stores responses with timestamps
+# Format: { "lat,lon": {"data": {...}, "timestamp": time.time()} }
+_weather_cache = {}
+_CACHE_TTL = 30 * 60  # 30 minutes in seconds
+
+
+def get_cached_weather(lat: str, lon: str) -> dict | None:
+    """Get cached weather data if it exists and hasn't expired."""
+    cache_key = f"{lat},{lon}"
+    if cache_key in _weather_cache:
+        cached = _weather_cache[cache_key]
+        if time.time() - cached["timestamp"] < _CACHE_TTL:
+            return cached["data"]
+        else:
+            # Cache expired, remove it
+            del _weather_cache[cache_key]
+    return None
+
+
+def set_cached_weather(lat: str, lon: str, data: dict) -> None:
+    """Cache weather data with current timestamp."""
+    cache_key = f"{lat},{lon}"
+    _weather_cache[cache_key] = {"data": data, "timestamp": time.time()}
 
 
 def map_metno_symbol(symbol_code: str) -> str:

@@ -22,7 +22,12 @@ from .cache_manager import (
     pick_file,
 )
 from .image_utils import resize_and_compress
-from .weather_utils import map_openmeteo_code, map_metno_symbol
+from .weather_utils import (
+    map_openmeteo_code,
+    map_metno_symbol,
+    get_cached_weather,
+    set_cached_weather,
+)
 
 
 @G.app.route("/favicon.ico")
@@ -190,7 +195,7 @@ def serve_icon(style, filename):
 
 
 @G.app.route("/api/weather/<lat>/<lon>")
-def get_weather(lat, lon):
+def get_weather(lat: str, lon: str):
     """
     Unified weather endpoint with fallback logic.
     Tries met.no first, falls back to open-meteo.
@@ -203,6 +208,12 @@ def get_weather(lat, lon):
     Returns:
         JSON with temp and standardized condition name
     """
+    # Check cache first
+    cached = get_cached_weather(lat, lon)
+    if cached:
+        G.logger.debug("Returning cached weather for %s,%s", lat, lon)
+        return jsonify(cached)
+
     # Try met.no first
     try:
         url = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={lat}&lon={lon}"
@@ -216,12 +227,12 @@ def get_weather(lat, lon):
         temp = latest["data"]["instant"]["details"]["air_temperature"]
         symbol_code = latest["data"]["next_1_hours"]["summary"]["symbol_code"]
 
-        return jsonify(
-            {
-                "temp": temp,
-                "condition": map_metno_symbol(symbol_code),
-            }
-        )
+        weather_data = {
+            "temp": temp,
+            "condition": map_metno_symbol(symbol_code),
+        }
+        set_cached_weather(lat, lon, weather_data)
+        return jsonify(weather_data)
     except Exception as e:  # pylint: disable=broad-except
         G.logger.warning("Met.no API failed, falling back to open-meteo: %s", e)
 
@@ -236,12 +247,12 @@ def get_weather(lat, lon):
         temp = data["current_weather"]["temperature"]
         code = data["current_weather"]["weathercode"]
 
-        return jsonify(
-            {
-                "temp": temp,
-                "condition": map_openmeteo_code(code),
-            }
-        )
+        weather_data = {
+            "temp": temp,
+            "condition": map_openmeteo_code(code),
+        }
+        set_cached_weather(lat, lon, weather_data)
+        return jsonify(weather_data)
     except Exception as e:  # pylint: disable=broad-except
         G.logger.error("All weather APIs failed: %s", e)
         return jsonify({"error": "Unable to fetch weather data"}), 503
