@@ -1,0 +1,78 @@
+/* Slideshow image */
+img {
+  max-width: 100vw;
+  max-height: 100vh;
+  min-width: 50vw;
+  min-height: 50vh;
+  object-fit: contain;
+  transition:
+    opacity 2s ease-in-out,
+    transform 2s ease-in-out;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  filter: drop-shadow(0 10px 30px rgba(0, 0, 0, 0.6));
+  border-radius: 12px;
+  opacity: 0;
+}
+
+/* Transition animations */
+.fade.show {
+  opacity: 1;
+}
+
+.zoom {
+  transform: translate(-50%, -50%) scale(0.8);
+}
+
+.zoom.show {
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+}
+
+.slide-left {
+  transform: translate(-150%, -50%);
+}
+
+.slide-left.show {
+  transform: translate(-50%, -50%);
+  opacity: 1;
+}
+
+.slide-right {
+  transform: translate(50%, -50%);
+}
+
+.slide-right.show {
+  transform: translate(-50%, -50%);
+  opacity: 1;
+}
+
+.slide-up {
+  transform: translate(-50%, -150%);
+}
+
+.slide-up.show {
+  transform: translate(-50%, -50%);
+  opacity: 1;
+}
+
+.slide-down {
+  transform: translate(-50%, 50%);
+}
+
+.slide-down.show {
+  transform: translate(-50%, -50%);
+  opacity: 1;
+}
+
+.rotate {
+  transform: translate(-50%, -50%) rotate(-180deg) scale(0.5);
+}
+
+.rotate.show {
+  transform: translate(-50%, -50%) rotate(0deg) scale(1);
+  opacity: 1;
+}

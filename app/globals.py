@@ -17,9 +17,10 @@ from .config_manager import load_config
 # Base paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(BASE_DIR, "..", "templates")
+STATIC_DIR = os.path.join(BASE_DIR, "..", "templates", "static")
 
 # Initialize Flask app
-app = Flask(__name__, template_folder=TEMPLATE_DIR)
+app = Flask(__name__, template_folder=TEMPLATE_DIR, static_folder=STATIC_DIR)
 app.secret_key = os.urandom(24)
 
 # Register HEIF opener so Pillow can read HEIC files

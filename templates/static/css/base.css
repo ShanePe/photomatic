@@ -1,0 +1,7 @@
+/* Global styles and resets */
+body {
+  margin: 0;
+  background: #000;
+  height: 100vh;
+  overflow: hidden;
+}
