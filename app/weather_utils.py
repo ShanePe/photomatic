@@ -1,6 +1,7 @@
 """Weather mapping utilities for standardizing different API responses."""
 
 import time
+from . import globals as G
 
 # Open-Meteo WMO weather codes to standardized condition names
 OPENMETEO_CODE_MAP = {
@@ -85,6 +86,7 @@ def set_cached_weather(lat: str, lon: str, data: dict) -> None:
     """Cache weather data with current timestamp."""
     cache_key = f"{lat},{lon}"
     _weather_cache[cache_key] = {"data": data, "timestamp": time.time()}
+    G.logger.info("Added cached weather for %s", cache_key)
 
 
 def map_metno_symbol(symbol_code: str) -> str:
