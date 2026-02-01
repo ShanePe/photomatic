@@ -211,7 +211,7 @@ def get_weather(lat: str, lon: str):
     # Check cache first
     cached = get_cached_weather(lat, lon)
     if cached:
-        G.logger.debug("Returning cached weather for %s,%s", lat, lon)
+        G.logger.info("Returning cached weather for %s,%s", lat, lon)
         return jsonify(cached)
 
     # Try met.no first
@@ -254,5 +254,5 @@ def get_weather(lat: str, lon: str):
         set_cached_weather(lat, lon, weather_data)
         return jsonify(weather_data)
     except Exception as e:  # pylint: disable=broad-except
-        G.logger.error("All weather APIs failed: %s", e)
+        G.logger.info("All weather APIs failed: %s", e)
         return jsonify({"error": "Unable to fetch weather data"}), 503
