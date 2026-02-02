@@ -86,7 +86,9 @@ def set_cached_weather(lat: str, lon: str, data: dict) -> None:
     """Cache weather data with current timestamp."""
     cache_key = f"{lat},{lon}"
     _weather_cache[cache_key] = {"data": data, "timestamp": time.time()}
-    G.logger.info("Added cached weather for %s", cache_key)
+    G.logger.info(
+        "Added cached weather for %s: %s", cache_key, _weather_cache[cache_key]
+    )
 
 
 def map_metno_symbol(symbol_code: str) -> str:
