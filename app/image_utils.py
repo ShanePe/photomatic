@@ -14,7 +14,9 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from . import globals as G
 from .cache_manager import prune_cache
 
-FONT_PATH = os.path.join(os.path.dirname(__file__), "assets", "fonts", "DejaVuSans.ttf")
+FONT_PATH = os.path.join(
+    os.path.dirname(__file__), "assets", "fonts", "NotoSans-Regular.ttf"
+)
 
 
 def draw_text(draw, font, text, x, y):
