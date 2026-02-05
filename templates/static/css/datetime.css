@@ -9,7 +9,7 @@
 }
 
 #time {
-  font-size: 4.5em;
+  font-size: 4em;
   font-weight: bold;
   text-shadow:
     -1px -1px 0 #000,
@@ -17,6 +17,8 @@
     -1px 1px 0 #000,
     1px 1px 0 #000,
     0 0 10px rgba(255, 255, 255, 0.6);
+  margin-top: 15px;
+  text-transform: uppercase;
 }
 
 #date {
