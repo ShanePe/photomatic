@@ -11,7 +11,7 @@ from flask import (
     send_from_directory,
     session,
 )
-from PIL import Image, UnidentifiedImageError
+from PIL import UnidentifiedImageError
 
 from . import globals as G
 from .cache_manager import (

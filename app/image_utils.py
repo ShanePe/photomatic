@@ -6,7 +6,6 @@ writing/reading cached JPEGs under the Flask instance cache directory.
 """
 
 import hashlib
-import io
 import os
 import atexit
 
