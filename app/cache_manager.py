@@ -9,6 +9,7 @@ under `instance/cache/photos/` while preserving same-day entries.
 import datetime
 import hashlib
 import heapq
+import json
 import os
 import random
 import re
@@ -20,38 +21,65 @@ from PIL import ExifTags, Image, UnidentifiedImageError
 from . import globals as G
 
 
-def prune_cache():
-    """
-    Prune the photo cache directory so total cached files <= G.CACHE_LIMIT.
-    Preserves keys found in `G.SAME_DAY_KEYS`.
-    Thread-safe operation using lock.
-    """
-    with G.get_cache_lock():
-        if G.CACHE_COUNT <= G.CACHE_LIMIT:
-            return
+# --- Metadata utilities ---
 
-        heap = []
-        for fn in os.listdir(G.CACHE_DIR_PHOTO):
-            if fn.startswith("."):
-                continue
-            f = os.path.join(G.CACHE_DIR_PHOTO, fn)
-            if not os.path.isfile(f):
-                continue
-            mtime = os.path.getmtime(f)
-            heapq.heappush(heap, (mtime, f))
 
-        while G.CACHE_COUNT > G.CACHE_LIMIT and heap:
-            mtime, f = heapq.heappop(heap)
-            key = os.path.basename(f).replace(".jpg", "")
-            if key in G.SAME_DAY_KEYS:
-                G.logger.info("Cache retained (same-day): %s", f)
-                continue
-            try:
-                os.remove(f)
-                G.CACHE_COUNT -= 1
-                G.logger.info("Cache pruned: removed %s", f)
-            except OSError:
-                G.logger.warning("Failed to remove cache file %s", f)
+def write_image_metadata(cache_file, width, height, mime_type="image/jpeg"):
+    """
+    Write image metadata to a .json sidecar file.
+
+    Args:
+        cache_file: Path to the cached image file.
+        width: Image width in pixels.
+        height: Image height in pixels.
+        mime_type: MIME type of the image (default: image/jpeg).
+
+    Returns:
+        bool: True if successful, False otherwise.
+    """
+    meta_file = cache_file + ".json"
+    try:
+        with open(meta_file, "w", encoding="utf-8") as f:
+            json.dump({"width": width, "height": height, "mime_type": mime_type}, f)
+        return True
+    except (OSError, IOError) as e:
+        G.logger.warning("Failed to write metadata file %s: %s", meta_file, e)
+        return False
+
+
+def get_image_metadata(cache_file):
+    """
+    Return (width, height, mime_type) for a cached JPEG file.
+
+    If a metadata .json file exists, use it. Otherwise, open the image,
+    extract metadata, write the .json via write_image_metadata, and return.
+    """
+    meta_file = cache_file + ".json"
+
+    # Try reading existing metadata file
+    if os.path.exists(meta_file):
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            return meta["width"], meta["height"], meta["mime_type"]
+        except (OSError, IOError, json.JSONDecodeError, KeyError) as e:
+            G.logger.warning("Failed to read metadata file %s: %s", meta_file, e)
+
+    # Fallback: open image, extract metadata, and write it
+    try:
+        with Image.open(cache_file) as img:
+            width, height = img.size
+            mime_type = (
+                getattr(img, "get_format_mimetype", lambda: None)() or "image/jpeg"
+            )
+        write_image_metadata(cache_file, width, height, mime_type)
+        return width, height, mime_type
+    except (OSError, UnidentifiedImageError) as e:
+        G.logger.error("Failed to open image for metadata %s: %s", cache_file, e)
+        return None, None, "image/jpeg"
+
+
+# --- Date utilities ---
 
 
 def parse_date_from_filename(filename):
@@ -60,7 +88,6 @@ def parse_date_from_filename(filename):
     Recognizes `YYYYMMDD` and `YYYY-MM-DD` patterns and returns a
     `datetime.date` instance or `None` if no valid date is found.
     """
-
     m1 = re.search(r"(\d{4})(\d{2})(\d{2})", filename)
     if m1:
         try:
@@ -122,6 +149,161 @@ def get_photo_date(path):
     return None
 
 
+def format_date_with_suffix(dt):
+    """Return date formatted with ordinal suffix, e.g. `1st Jan 2020`."""
+    day = dt.day
+    if 11 <= day <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    return f"{day}{suffix} {dt.strftime('%b %Y')}"
+
+
+# --- Cache management ---
+
+
+def prune_cache():
+    """
+    Prune the photo cache directory so total cached files <= G.CACHE_LIMIT.
+
+    Preserves keys found in `G.SAME_DAY_KEYS`.
+    Thread-safe operation using lock.
+    """
+    with G.get_cache_lock():
+        if G.CACHE_COUNT <= G.CACHE_LIMIT:
+            return
+
+        heap = []
+        for fn in os.listdir(G.CACHE_DIR_PHOTO):
+            if fn.startswith("."):
+                continue
+            f = os.path.join(G.CACHE_DIR_PHOTO, fn)
+            if not os.path.isfile(f):
+                continue
+            mtime = os.path.getmtime(f)
+            heapq.heappush(heap, (mtime, f))
+
+        while G.CACHE_COUNT > G.CACHE_LIMIT and heap:
+            mtime, f = heapq.heappop(heap)
+            key = os.path.basename(f).replace(".jpg", "")
+            if key in G.SAME_DAY_KEYS:
+                G.logger.info("Cache retained (same-day): %s", f)
+                continue
+            try:
+                os.remove(f)
+                G.CACHE_COUNT -= 1
+                G.logger.info("Cache pruned: removed %s", f)
+            except OSError:
+                G.logger.warning("Failed to remove cache file %s", f)
+
+
+def clear_directory(path):
+    """
+    Delete all files and folders inside the given directory,
+    but leave the directory itself intact.
+    """
+    if not os.path.isdir(path):
+        raise ValueError(f"Not a directory: {path}")
+
+    for entry in os.listdir(path):
+        full_path = os.path.join(path, entry)
+
+        if os.path.isfile(full_path) or os.path.islink(full_path):
+            os.remove(full_path)
+        elif os.path.isdir(full_path):
+            shutil.rmtree(full_path)
+
+
+def clear_entire_cache():
+    """
+    Completely clear all cached JPEGs and cache text files.
+
+    Removes:
+      - All files under G.CACHE_DIR_PHOTO and G.CACHE_DIR_ICON
+      - cache_all.txt
+      - cache_same_day.txt
+
+    Resets:
+      - G.CACHE_COUNT
+      - G.SAME_DAY_KEYS
+      - G.CACHE_DATE
+
+    Returns:
+        bool: True if successful, False if errors occurred.
+    """
+    with G.get_cache_lock():
+        errors = False
+
+        G.logger.info(
+            "Full cache clear requested — removing all cached files and indexes."
+        )
+
+        # 1. Remove cached JPEGs
+        for cache_subdir in (G.CACHE_DIR_PHOTO, G.CACHE_DIR_ICON):
+            try:
+                clear_directory(cache_subdir)
+                G.logger.info("Cleared cache directory: %s", cache_subdir)
+            except OSError as e:
+                G.logger.warning(
+                    "Failed to clear cache directory %s: %s", cache_subdir, e
+                )
+                errors = True
+
+        # 2. Remove cache text files
+        for txt in ("cache_all.txt", "cache_same_day.txt"):
+            txt_path = os.path.join(G.CACHE_DIR, txt)
+            try:
+                os.remove(txt_path)
+                G.logger.info("Removed cache index file: %s", txt_path)
+            except FileNotFoundError:
+                G.logger.info(
+                    "Cache index file not found (already cleared): %s", txt_path
+                )
+            except OSError as e:
+                G.logger.warning(
+                    "Failed to remove cache index file %s: %s", txt_path, e
+                )
+                errors = True
+
+        # 3. Reset globals
+        G.CACHE_COUNT = 0
+        G.SAME_DAY_KEYS = []
+        G.CACHE_DATE = None
+
+        G.logger.info(
+            "Cache fully cleared. CACHE_COUNT reset to 0, SAME_DAY_KEYS emptied."
+        )
+
+        return not errors
+
+
+# --- Cache file utilities ---
+
+
+def get_line(filepath, file_line_idx):
+    """Return the 0-based `file_line_idx` line from `filepath` or `None`.
+
+    This reads the file sequentially and does not load the whole file into memory.
+    """
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                if i == file_line_idx:
+                    return line.strip()
+    except FileNotFoundError:
+        return None
+    return None
+
+
+def count_lines(filepath):
+    """Return number of lines in `filepath` or 0 if it doesn't exist."""
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            return sum(1 for _ in f)
+    except FileNotFoundError:
+        return 0
+
+
 def build_cache(base_dir):
     """Scan `base_dir` and atomically rebuild cache files.
 
@@ -134,8 +316,6 @@ def build_cache(base_dir):
     """
     G.CACHE_DATE = None
     G.BUILDING_CACHE = True
-    # Coerce SAME_DAY_KEYS to a fresh mutable list to avoid issues if an
-    # earlier import created an immutable object under a different module name.
     G.SAME_DAY_KEYS = []
 
     try:
@@ -172,30 +352,6 @@ def build_cache(base_dir):
         G.BUILDING_CACHE = False
 
 
-def get_line(filepath, file_line_idx):
-    """Return the 0-based `file_line_idx` line from `filepath` or `None`.
-
-    This reads the file sequentially and does not load the whole file into memory.
-    """
-    try:
-        with open(filepath, encoding="utf-8") as f:
-            for i, line in enumerate(f):
-                if i == file_line_idx:
-                    return line.strip()
-    except FileNotFoundError:
-        return None
-    return None
-
-
-def count_lines(filepath):
-    """Return number of lines in `filepath` or 0 if it doesn't exist."""
-    try:
-        with open(filepath, encoding="utf-8") as f:
-            return sum(1 for _ in f)
-    except FileNotFoundError:
-        return 0
-
-
 def pick_file(base_dir):
     """Select the next photo path for the current session.
 
@@ -230,90 +386,3 @@ def pick_file(base_dir):
         return get_line(all_file, rand_idx)
 
     return None
-
-
-def format_date_with_suffix(dt):
-    """Return date formatted with ordinal suffix, e.g. `1st Jan 2020`."""
-    day = dt.day
-    if 11 <= day <= 13:
-        suffix = "th"
-    else:
-        suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
-    return f"{day}{suffix} {dt.strftime('%b %Y')}"
-
-
-def clear_directory(path):
-    """
-    Deletes all files and folders inside the given directory,
-    but leaves the directory itself intact.
-    """
-    if not os.path.isdir(path):
-        raise ValueError(f"Not a directory: {path}")
-
-    for entry in os.listdir(path):
-        full_path = os.path.join(path, entry)
-
-        if os.path.isfile(full_path) or os.path.islink(full_path):
-            os.remove(full_path)
-
-        elif os.path.isdir(full_path):
-            shutil.rmtree(full_path)
-
-
-def clear_entire_cache():
-    """
-    Completely clear all cached JPEGs and cache text files.
-
-    Removes:
-      - All files under G.CACHE_DIR_PHOTO G.CACHE_DIR_ICON
-      - cache_all.txt
-      - cache_same_day.txt
-
-    Resets:
-      - G.CACHE_COUNT
-      - G.SAME_DAY_KEYS
-      - G.CACHE_DATE
-
-    Returns:
-        bool: True if successful, False if errors occurred.
-    """
-    with G.get_cache_lock():
-        errors = False
-
-        G.logger.info(
-            "Full cache clear requested — removing all cached files and indexes."
-        )
-
-        # 1. Remove cached JPEGs
-        for cache_subdir in (G.CACHE_DIR_PHOTO, G.CACHE_DIR_ICON):
-            try:
-                clear_directory(cache_subdir)
-                G.logger.info("Cleared cache directory: %s", cache_subdir)
-            except OSError as e:
-                G.logger.warning(
-                    "Failed to clear cache directory %s: %s", cache_subdir, e
-                )
-                errors = True
-
-        # 2. Remove cache text files
-        for txt in ("cache_all.txt", "cache_same_day.txt"):
-            path = os.path.join(G.CACHE_DIR, txt)
-            try:
-                os.remove(path)
-                G.logger.info("Removed cache index file: %s", path)
-            except FileNotFoundError:
-                G.logger.info("Cache index file not found (already cleared): %s", path)
-            except OSError as e:
-                G.logger.warning("Failed to remove cache index file %s: %s", path, e)
-                errors = True
-
-        # 3. Reset globals
-        G.CACHE_COUNT = 0
-        G.SAME_DAY_KEYS = []
-        G.CACHE_DATE = None
-
-        G.logger.info(
-            "Cache fully cleared. CACHE_COUNT reset to 0, SAME_DAY_KEYS emptied."
-        )
-
-        return not errors

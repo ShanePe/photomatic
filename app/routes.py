@@ -17,6 +17,7 @@ from . import globals as G
 from .cache_manager import (
     clear_entire_cache,
     format_date_with_suffix,
+    get_image_metadata,
     get_photo_date,
     pick_file,
 )
@@ -77,7 +78,7 @@ def random_image():
 
         photo_date = get_photo_date(path)
 
-        buf = resize_and_compress(
+        cache_file = resize_and_compress(
             path,
             {
                 "top_left": format_date_with_suffix(photo_date) if photo_date else "",
@@ -86,18 +87,8 @@ def random_image():
             50,
         )
 
-        compressed_size = len(buf.getvalue())
-        width = height = None
-        try:
-            buf.seek(0)
-            with Image.open(buf) as img:
-                width, height = img.size
-                mime_type = (
-                    getattr(img, "get_format_mimetype", lambda: None)() or "image/jpeg"
-                )
-            buf.seek(0)
-        except (UnidentifiedImageError, OSError, ValueError):
-            mime_type = "image/jpeg"
+        compressed_size = os.path.getsize(cache_file)
+        width, height, mime_type = get_image_metadata(cache_file)
 
         session["photo_served"] = session.get("photo_served", 0) + 1
 
@@ -119,7 +110,7 @@ def random_image():
             session.get("photo_served"),
         )
 
-        return send_file(buf, mimetype="image/jpeg")
+        return send_file(cache_file, mimetype="image/jpeg")
 
     except (OSError, UnidentifiedImageError, ValueError) as e:
         G.logger.error("Error serving image: %s", e)

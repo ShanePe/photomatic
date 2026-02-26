@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 import requests
 
 from . import globals as G
-from .cache_manager import prune_cache
+from .cache_manager import prune_cache, write_image_metadata
 
 # HTTP session for connection pooling and reuse
 _SESSION_CONTAINER: dict[str, requests.Session | None] = {"session": None}
@@ -100,10 +100,10 @@ def resize_and_compress(
     path: str,
     overlays: dict[str, str] | None = None,
     quality: int = 75,
-) -> io.BytesIO:
+) -> str:
     """
     Resize/compress image with optional overlay text, using local cache.
-    Returns an in-memory `BytesIO` containing a JPEG.
+    Returns the path to the cached JPEG file.
     Ensures proper resource cleanup even on exceptions.
     """
 
@@ -114,17 +114,12 @@ def resize_and_compress(
 
     # --- Cache check ---
     if os.path.exists(cache_file):
-        with open(cache_file, "rb") as f:
-            buf = io.BytesIO(f.read())
-            buf.seek(0)
         G.logger.info(
             "Cache hit for %s (size %.1f KB)", path, os.path.getsize(cache_file) / 1024
         )
-        return buf
+        return cache_file
 
     original_size = os.path.getsize(path)
-    buf = None
-
     try:
         with Image.open(path) as img:
             img = ImageOps.exif_transpose(img)
@@ -137,16 +132,19 @@ def resize_and_compress(
             if overlays:
                 apply_overlays(img, overlays)
 
-            # Save to buffer
-            buf = io.BytesIO()
-            img.convert("RGB").save(
-                buf, format="JPEG", quality=quality, optimize=True, progressive=True
-            )
-            buf.seek(0)
-
             # Save to cache
-            with open(cache_file, "wb") as f:
-                f.write(buf.getvalue())
+            rgb_img = img.convert("RGB")
+            rgb_img.save(
+                cache_file,
+                format="JPEG",
+                quality=quality,
+                optimize=True,
+                progressive=True,
+            )
+
+            # Write metadata file (use final dimensions after thumbnail)
+            final_width, final_height = rgb_img.size
+            write_image_metadata(cache_file, final_width, final_height, "image/jpeg")
 
             with G.get_cache_lock():
                 G.CACHE_COUNT += 1
@@ -161,11 +159,14 @@ def resize_and_compress(
             overlays,
         )
 
+        # Optionally force garbage collection after large image ops
+        import gc
+
+        gc.collect()
+
         prune_cache()
 
-        return buf
+        return cache_file
     except Exception as e:
-        # Ensure buffer is cleaned up on error
-        if buf is not None:
-            buf.close()
+        G.logger.error("Error processing image %s: %s", path, e)
         raise e
