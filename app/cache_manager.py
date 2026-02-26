@@ -24,32 +24,34 @@ def prune_cache():
     """
     Prune the photo cache directory so total cached files <= G.CACHE_LIMIT.
     Preserves keys found in `G.SAME_DAY_KEYS`.
+    Thread-safe operation using lock.
     """
-    if G.CACHE_COUNT <= G.CACHE_LIMIT:
-        return
+    with G.get_cache_lock():
+        if G.CACHE_COUNT <= G.CACHE_LIMIT:
+            return
 
-    heap = []
-    for fn in os.listdir(G.CACHE_DIR_PHOTO):
-        if fn.startswith("."):
-            continue
-        f = os.path.join(G.CACHE_DIR_PHOTO, fn)
-        if not os.path.isfile(f):
-            continue
-        mtime = os.path.getmtime(f)
-        heapq.heappush(heap, (mtime, f))
+        heap = []
+        for fn in os.listdir(G.CACHE_DIR_PHOTO):
+            if fn.startswith("."):
+                continue
+            f = os.path.join(G.CACHE_DIR_PHOTO, fn)
+            if not os.path.isfile(f):
+                continue
+            mtime = os.path.getmtime(f)
+            heapq.heappush(heap, (mtime, f))
 
-    while G.CACHE_COUNT > G.CACHE_LIMIT and heap:
-        mtime, f = heapq.heappop(heap)
-        key = os.path.basename(f).replace(".jpg", "")
-        if key in G.SAME_DAY_KEYS:
-            G.logger.info("Cache retained (same-day): %s", f)
-            continue
-        try:
-            os.remove(f)
-            G.CACHE_COUNT -= 1
-            G.logger.info("Cache pruned: removed %s", f)
-        except OSError:
-            G.logger.warning("Failed to remove cache file %s", f)
+        while G.CACHE_COUNT > G.CACHE_LIMIT and heap:
+            mtime, f = heapq.heappop(heap)
+            key = os.path.basename(f).replace(".jpg", "")
+            if key in G.SAME_DAY_KEYS:
+                G.logger.info("Cache retained (same-day): %s", f)
+                continue
+            try:
+                os.remove(f)
+                G.CACHE_COUNT -= 1
+                G.logger.info("Cache pruned: removed %s", f)
+            except OSError:
+                G.logger.warning("Failed to remove cache file %s", f)
 
 
 def parse_date_from_filename(filename):
@@ -91,17 +93,21 @@ def get_photo_date(path):
         return filename_date
 
     try:
-        img = Image.open(path)
-        exif = img.getexif()
-        if exif:
-            for tag, value in exif.items():
-                tag_name = ExifTags.TAGS.get(tag, tag)
-                if tag_name in ("DateTimeOriginal", "DateTimeDigitized", "DateTime"):
-                    try:
-                        dt = datetime.datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
-                        return dt.date()
-                    except ValueError as e:
-                        G.logger.error("Bad EXIF date in %s: %s", path, e)
+        with Image.open(path) as img:
+            exif = img.getexif()
+            if exif:
+                for tag, value in exif.items():
+                    tag_name = ExifTags.TAGS.get(tag, tag)
+                    if tag_name in (
+                        "DateTimeOriginal",
+                        "DateTimeDigitized",
+                        "DateTime",
+                    ):
+                        try:
+                            dt = datetime.datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+                            return dt.date()
+                        except ValueError as e:
+                            G.logger.error("Bad EXIF date in %s: %s", path, e)
     except UnidentifiedImageError as e:
         G.logger.error("Cannot identify image %s: %s", path, e)
     except OSError as e:
@@ -271,36 +277,43 @@ def clear_entire_cache():
     Returns:
         bool: True if successful, False if errors occurred.
     """
-    errors = False
+    with G.get_cache_lock():
+        errors = False
 
-    G.logger.info("Full cache clear requested — removing all cached files and indexes.")
+        G.logger.info(
+            "Full cache clear requested — removing all cached files and indexes."
+        )
 
-    # 1. Remove cached JPEGs
-    for cache_subdir in (G.CACHE_DIR_PHOTO, G.CACHE_DIR_ICON):
-        try:
-            clear_directory(cache_subdir)
-            G.logger.info("Cleared cache directory: %s", cache_subdir)
-        except OSError as e:
-            G.logger.warning("Failed to clear cache directory %s: %s", cache_subdir, e)
-            errors = True
+        # 1. Remove cached JPEGs
+        for cache_subdir in (G.CACHE_DIR_PHOTO, G.CACHE_DIR_ICON):
+            try:
+                clear_directory(cache_subdir)
+                G.logger.info("Cleared cache directory: %s", cache_subdir)
+            except OSError as e:
+                G.logger.warning(
+                    "Failed to clear cache directory %s: %s", cache_subdir, e
+                )
+                errors = True
 
-    # 2. Remove cache text files
-    for txt in ("cache_all.txt", "cache_same_day.txt"):
-        path = os.path.join(G.CACHE_DIR, txt)
-        try:
-            os.remove(path)
-            G.logger.info("Removed cache index file: %s", path)
-        except FileNotFoundError:
-            G.logger.info("Cache index file not found (already cleared): %s", path)
-        except OSError as e:
-            G.logger.warning("Failed to remove cache index file %s: %s", path, e)
-            errors = True
+        # 2. Remove cache text files
+        for txt in ("cache_all.txt", "cache_same_day.txt"):
+            path = os.path.join(G.CACHE_DIR, txt)
+            try:
+                os.remove(path)
+                G.logger.info("Removed cache index file: %s", path)
+            except FileNotFoundError:
+                G.logger.info("Cache index file not found (already cleared): %s", path)
+            except OSError as e:
+                G.logger.warning("Failed to remove cache index file %s: %s", path, e)
+                errors = True
 
-    # 3. Reset globals
-    G.CACHE_COUNT = 0
-    G.SAME_DAY_KEYS = []
-    G.CACHE_DATE = None
+        # 3. Reset globals
+        G.CACHE_COUNT = 0
+        G.SAME_DAY_KEYS = []
+        G.CACHE_DATE = None
 
-    G.logger.info("Cache fully cleared. CACHE_COUNT reset to 0, SAME_DAY_KEYS emptied.")
+        G.logger.info(
+            "Cache fully cleared. CACHE_COUNT reset to 0, SAME_DAY_KEYS emptied."
+        )
 
-    return not errors
+        return not errors

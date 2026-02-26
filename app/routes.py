@@ -3,7 +3,6 @@
 import os
 from urllib.parse import urlparse
 
-import requests
 from flask import (
     jsonify,
     render_template,
@@ -21,7 +20,7 @@ from .cache_manager import (
     get_photo_date,
     pick_file,
 )
-from .image_utils import resize_and_compress
+from .image_utils import resize_and_compress, get_requests_session
 from .weather_utils import (
     map_openmeteo_code,
     map_metno_symbol,
@@ -179,12 +178,17 @@ def cache_icon():
         return jsonify({"path": relative_path})
 
     # Download and cache
-    r = requests.get(full_url, timeout=60)
-    if r.status_code == 200:
-        with open(local_path, "wb") as f:
-            f.write(r.content)
-        return jsonify({"path": relative_path})
-    else:
+    try:
+        session_obj = get_requests_session()
+        r = session_obj.get(full_url, timeout=60)
+        if r.status_code == 200:
+            with open(local_path, "wb") as f:
+                f.write(r.content)
+            return jsonify({"path": relative_path})
+        else:
+            return jsonify({"error": "Failed to fetch icon"}), 500
+    except (OSError, IOError, ValueError) as e:
+        G.logger.error("Error caching icon from %s: %s", full_url, e)
         return jsonify({"error": "Failed to fetch icon"}), 500
 
 
@@ -215,11 +219,12 @@ def get_weather(lat: str, lon: str):
         return jsonify(cached)
 
     # Try met.no first
+    session_obj = get_requests_session()
     try:
         url = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={lat}&lon={lon}"
         headers = {"User-Agent": "PhotomaticWeatherDisplay/1.0"}
 
-        response = requests.get(url, headers=headers, timeout=10)
+        response = session_obj.get(url, headers=headers, timeout=10)
         response.raise_for_status()
 
         data = response.json()
@@ -240,7 +245,7 @@ def get_weather(lat: str, lon: str):
     try:
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
 
-        response = requests.get(url, timeout=10)
+        response = session_obj.get(url, timeout=10)
         response.raise_for_status()
 
         data = response.json()

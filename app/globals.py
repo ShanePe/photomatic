@@ -7,12 +7,15 @@ and configuration loaded from config.yaml.
 
 import os
 import logging
+import threading
+import atexit
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from flask import Flask
 from pillow_heif import register_heif_opener
 from .config_manager import load_config
+from .image_utils import cleanup_requests_session
 
 # Base paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -114,3 +117,33 @@ PHOTO_ROOT = None
 CACHE_DATE = None
 BUILDING_CACHE = False
 CACHE_COUNT = 0
+_cache_lock = threading.RLock()  # Thread-safe cache operations
+
+
+def _cleanup_resources():
+    """Clean up resources on application shutdown."""
+    logger.info("Cleaning up application resources...")
+
+    # Close logging handlers to release file handles
+    for handler in logger.handlers[:]:
+        try:
+            handler.close()
+            logger.removeHandler(handler)
+        except (OSError, ValueError) as e:
+            print(f"Error closing handler: {e}")
+
+    # Close requests session if it was created
+    try:
+        cleanup_requests_session()
+        logger.info("Closed requests session")
+    except (ImportError, AttributeError) as e:
+        logger.warning("Error closing requests session: %s", e)
+
+
+# Register cleanup on application shutdown
+atexit.register(_cleanup_resources)
+
+
+def get_cache_lock():
+    """Return the cache lock for thread-safe operations."""
+    return _cache_lock

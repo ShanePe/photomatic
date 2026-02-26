@@ -8,11 +8,33 @@ writing/reading cached JPEGs under the Flask instance cache directory.
 import hashlib
 import io
 import os
+import atexit
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+import requests
 
 from . import globals as G
 from .cache_manager import prune_cache
+
+# HTTP session for connection pooling and reuse
+_SESSION_CONTAINER: dict[str, requests.Session | None] = {"session": None}
+
+
+def get_requests_session():
+    """Get or create a persistent requests session for connection pooling."""
+    if _SESSION_CONTAINER["session"] is None:
+        _SESSION_CONTAINER["session"] = requests.Session()
+        # Register cleanup on app shutdown
+        atexit.register(cleanup_requests_session)
+    return _SESSION_CONTAINER["session"]
+
+
+def cleanup_requests_session():
+    """Clean up the requests session on shutdown."""
+    if _SESSION_CONTAINER["session"] is not None:
+        _SESSION_CONTAINER["session"].close()
+        _SESSION_CONTAINER["session"] = None
+
 
 FONT_PATH = os.path.join(
     os.path.dirname(__file__), "assets", "fonts", "NotoSans-Regular.ttf"
@@ -82,6 +104,7 @@ def resize_and_compress(
     """
     Resize/compress image with optional overlay text, using local cache.
     Returns an in-memory `BytesIO` containing a JPEG.
+    Ensures proper resource cleanup even on exceptions.
     """
 
     overlays = overlays or {}
@@ -100,41 +123,49 @@ def resize_and_compress(
         return buf
 
     original_size = os.path.getsize(path)
+    buf = None
 
-    with Image.open(path) as img:
-        img = ImageOps.exif_transpose(img)
+    try:
+        with Image.open(path) as img:
+            img = ImageOps.exif_transpose(img)
 
-        width, height = img.size
-        if width > G.MAX_WIDTH or height > G.MAX_HEIGHT:
-            img.thumbnail((G.MAX_WIDTH, G.MAX_HEIGHT), Image.Resampling.LANCZOS)
+            width, height = img.size
+            if width > G.MAX_WIDTH or height > G.MAX_HEIGHT:
+                img.thumbnail((G.MAX_WIDTH, G.MAX_HEIGHT), Image.Resampling.LANCZOS)
 
-        # Apply overlay text
-        if overlays:
-            apply_overlays(img, overlays)
+            # Apply overlay text
+            if overlays:
+                apply_overlays(img, overlays)
 
-        # Save to buffer
-        buf = io.BytesIO()
-        img.convert("RGB").save(
-            buf, format="JPEG", quality=quality, optimize=True, progressive=True
+            # Save to buffer
+            buf = io.BytesIO()
+            img.convert("RGB").save(
+                buf, format="JPEG", quality=quality, optimize=True, progressive=True
+            )
+            buf.seek(0)
+
+            # Save to cache
+            with open(cache_file, "wb") as f:
+                f.write(buf.getvalue())
+
+            with G.get_cache_lock():
+                G.CACHE_COUNT += 1
+
+        compressed_size = os.path.getsize(cache_file)
+
+        G.logger.info(
+            "Processed %s | Original: %.1f KB | Compressed: %.1f KB | Overlays: %s",
+            os.path.basename(path),
+            original_size / 1024,
+            compressed_size / 1024,
+            overlays,
         )
-        buf.seek(0)
 
-        # Save to cache
-        with open(cache_file, "wb") as f:
-            f.write(buf.getvalue())
+        prune_cache()
 
-        G.CACHE_COUNT += 1
-
-    compressed_size = os.path.getsize(cache_file)
-
-    G.logger.info(
-        "Processed %s | Original: %.1f KB | Compressed: %.1f KB | Overlays: %s",
-        os.path.basename(path),
-        original_size / 1024,
-        compressed_size / 1024,
-        overlays,
-    )
-
-    prune_cache()
-
-    return buf
+        return buf
+    except Exception as e:
+        # Ensure buffer is cleaned up on error
+        if buf is not None:
+            buf.close()
+        raise e
