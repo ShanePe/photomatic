@@ -82,7 +82,8 @@ def _cleanup_expired_cache():
         del _weather_cache[key]
     if expired_keys:
         G.logger.info(
-            "Weather cache cleanup: removed %d expired entries", len(expired_keys)
+            "[WeatherCache] Weather cache cleanup: removed %d expired entries",
+            len(expired_keys),
         )
 
 
@@ -97,7 +98,8 @@ def _enforce_cache_limit():
         for key, _ in oldest:
             del _weather_cache[key]
         G.logger.info(
-            "Weather cache limited: removed %d oldest entries", entries_to_remove
+            "[WeatherCache] Weather cache limited: removed %d oldest entries",
+            entries_to_remove,
         )
 
 
@@ -119,7 +121,9 @@ def set_cached_weather(lat: str, lon: str, data: dict) -> None:
     cache_key = f"{lat},{lon}"
     _weather_cache[cache_key] = {"data": data, "timestamp": time.time()}
     G.logger.info(
-        "Added cached weather for %s (cache size: %d)", cache_key, len(_weather_cache)
+        "[WeatherCache] Added cached weather for %s (cache size: %d)",
+        cache_key,
+        len(_weather_cache),
     )
 
 

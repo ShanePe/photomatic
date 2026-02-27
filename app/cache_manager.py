@@ -43,7 +43,9 @@ def write_image_metadata(cache_file, width, height, mime_type="image/jpeg"):
             json.dump({"width": width, "height": height, "mime_type": mime_type}, f)
         return True
     except (OSError, IOError) as e:
-        G.logger.warning("Failed to write metadata file %s: %s", meta_file, e)
+        G.logger.warning(
+            "[Metadata] Failed to write metadata file %s: %s", meta_file, e
+        )
         return False
 
 
@@ -63,7 +65,9 @@ def get_image_metadata(cache_file):
                 meta = json.load(f)
             return meta["width"], meta["height"], meta["mime_type"]
         except (OSError, IOError, json.JSONDecodeError, KeyError) as e:
-            G.logger.warning("Failed to read metadata file %s: %s", meta_file, e)
+            G.logger.warning(
+                "[Metadata] Failed to read metadata file %s: %s", meta_file, e
+            )
 
     # Fallback: open image, extract metadata, and write it
     try:
@@ -75,7 +79,9 @@ def get_image_metadata(cache_file):
         write_image_metadata(cache_file, width, height, mime_type)
         return width, height, mime_type
     except (OSError, UnidentifiedImageError) as e:
-        G.logger.error("Failed to open image for metadata %s: %s", cache_file, e)
+        G.logger.error(
+            "[Metadata] Failed to open image for metadata %s: %s", cache_file, e
+        )
         return None, None, "image/jpeg"
 
 
@@ -93,14 +99,18 @@ def parse_date_from_filename(filename):
         try:
             return datetime.date(int(m1.group(1)), int(m1.group(2)), int(m1.group(3)))
         except ValueError as e:
-            G.logger.error("Invalid YYYYMMDD in filename %s: %s", filename, e)
+            G.logger.error(
+                "[DateParser] Invalid YYYYMMDD in filename %s: %s", filename, e
+            )
 
     m2 = re.search(r"(\d{4})-(\d{2})-(\d{2})", filename)
     if m2:
         try:
             return datetime.date(int(m2.group(1)), int(m2.group(2)), int(m2.group(3)))
         except ValueError as e:
-            G.logger.error("Invalid YYYY-MM-DD in filename %s: %s", filename, e)
+            G.logger.error(
+                "[DateParser] Invalid YYYY-MM-DD in filename %s: %s", filename, e
+            )
 
     return None
 
@@ -134,17 +144,19 @@ def get_photo_date(path):
                             dt = datetime.datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
                             return dt.date()
                         except ValueError as e:
-                            G.logger.error("Bad EXIF date in %s: %s", path, e)
+                            G.logger.error(
+                                "[DateParser] Bad EXIF date in %s: %s", path, e
+                            )
     except UnidentifiedImageError as e:
-        G.logger.error("Cannot identify image %s: %s", path, e)
+        G.logger.error("[DateParser] Cannot identify image %s: %s", path, e)
     except OSError as e:
-        G.logger.error("I/O error reading %s: %s", path, e)
+        G.logger.error("[DateParser] I/O error reading %s: %s", path, e)
 
     try:
         ts = os.path.getmtime(path)
         return datetime.date.fromtimestamp(ts)
     except OSError as e:
-        G.logger.error("File timestamp read failed for %s: %s", path, e)
+        G.logger.error("[DateParser] File timestamp read failed for %s: %s", path, e)
 
     return None
 
@@ -188,7 +200,7 @@ def prune_cache():
             mtime, f = heapq.heappop(heap)
             key = os.path.basename(f).replace(".jpg", "")
             if key in G.SAME_DAY_KEYS:
-                G.logger.info("Cache retained (same-day): %s", f)
+                G.logger.info("[CacheManager] Cache retained (same-day): %s", f)
                 continue
             try:
                 os.remove(f)
@@ -197,9 +209,9 @@ def prune_cache():
                 if os.path.exists(meta_file):
                     os.remove(meta_file)
                 G.CACHE_COUNT -= 1
-                G.logger.info("Cache pruned: removed %s", f)
+                G.logger.info("[CacheManager] Cache pruned: removed %s", f)
             except OSError:
-                G.logger.warning("Failed to remove cache file %s", f)
+                G.logger.warning("[CacheManager] Failed to remove cache file %s", f)
 
     # Clean up any orphaned metadata files (runs outside the lock for perf)
     prune_orphaned_metadata()
@@ -229,11 +241,14 @@ def prune_orphaned_metadata():
                     removed_count += 1
                 except OSError:
                     G.logger.warning(
-                        "Failed to remove orphaned metadata: %s", meta_path
+                        "[CacheManager] Failed to remove orphaned metadata: %s",
+                        meta_path,
                     )
 
         if removed_count > 0:
-            G.logger.info("Pruned %d orphaned metadata files", removed_count)
+            G.logger.info(
+                "[CacheManager] Pruned %d orphaned metadata files", removed_count
+            )
 
 
 def clear_directory(path):
@@ -274,17 +289,21 @@ def clear_entire_cache():
         errors = False
 
         G.logger.info(
-            "Full cache clear requested — removing all cached files and indexes."
+            "[CacheManager] Full cache clear requested — removing all cached files and indexes."
         )
 
         # 1. Remove cached JPEGs
         for cache_subdir in (G.CACHE_DIR_PHOTO, G.CACHE_DIR_ICON):
             try:
                 clear_directory(cache_subdir)
-                G.logger.info("Cleared cache directory: %s", cache_subdir)
+                G.logger.info(
+                    "[CacheManager] Cleared cache directory: %s", cache_subdir
+                )
             except OSError as e:
                 G.logger.warning(
-                    "Failed to clear cache directory %s: %s", cache_subdir, e
+                    "[CacheManager] Failed to clear cache directory %s: %s",
+                    cache_subdir,
+                    e,
                 )
                 errors = True
 
@@ -293,14 +312,17 @@ def clear_entire_cache():
             txt_path = os.path.join(G.CACHE_DIR, txt)
             try:
                 os.remove(txt_path)
-                G.logger.info("Removed cache index file: %s", txt_path)
+                G.logger.info("[CacheManager] Removed cache index file: %s", txt_path)
             except FileNotFoundError:
                 G.logger.info(
-                    "Cache index file not found (already cleared): %s", txt_path
+                    "[CacheManager] Cache index file not found (already cleared): %s",
+                    txt_path,
                 )
             except OSError as e:
                 G.logger.warning(
-                    "Failed to remove cache index file %s: %s", txt_path, e
+                    "[CacheManager] Failed to remove cache index file %s: %s",
+                    txt_path,
+                    e,
                 )
                 errors = True
 
@@ -310,7 +332,7 @@ def clear_entire_cache():
         G.CACHE_DATE = None
 
         G.logger.info(
-            "Cache fully cleared. CACHE_COUNT reset to 0, SAME_DAY_KEYS emptied."
+            "[CacheManager] Cache fully cleared. CACHE_COUNT reset to 0, SAME_DAY_KEYS emptied."
         )
 
         return not errors

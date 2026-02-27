@@ -97,7 +97,7 @@ def random_image():
             session["photo_served"] = 0
 
         G.logger.info(
-            "Served buffer from %s | Compressed size: %.1f KB | Dimensions: %sx%s | MIME: %s | "
+            "[Routes] Served buffer from %s | Compressed size: %.1f KB | Dimensions: %sx%s | MIME: %s | "
             "Client IP: %s | UA: %s | Photo index: %s : Photo served: %s",
             os.path.basename(path),
             compressed_size / 1024,
@@ -113,7 +113,7 @@ def random_image():
         return send_file(cache_file, mimetype="image/jpeg")
 
     except (OSError, UnidentifiedImageError, ValueError) as e:
-        G.logger.error("Error serving image: %s", e)
+        G.logger.error("[Routes] Error serving image: %s", e)
         return f"Error: {e}", 500
 
 
@@ -126,7 +126,7 @@ def clear_cache():
         return "Cache is currently being built. Try again later.", 503
 
     try:
-        G.logger.info("Manual cache clear requested by client.")
+        G.logger.info("[Routes] Manual cache clear requested by client.")
 
         clear_entire_cache()
 
@@ -137,7 +137,7 @@ def clear_cache():
         return "Cache cleared.", 200
 
     except Exception as e:  # pylint: disable=broad-except
-        G.logger.error("Error clearing cache: %s", e)
+        G.logger.error("[Routes] Error clearing cache: %s", e)
         return f"Error clearing cache: {e}", 500
 
 
@@ -179,7 +179,7 @@ def cache_icon():
         else:
             return jsonify({"error": "Failed to fetch icon"}), 500
     except (OSError, IOError, ValueError) as e:
-        G.logger.error("Error caching icon from %s: %s", full_url, e)
+        G.logger.error("[Icons] Error caching icon from %s: %s", full_url, e)
         return jsonify({"error": "Failed to fetch icon"}), 500
 
 
@@ -206,7 +206,7 @@ def get_weather(lat: str, lon: str):
     # Check cache first
     cached = get_cached_weather(lat, lon)
     if cached:
-        G.logger.info("Returning cached weather for %s,%s", lat, lon)
+        G.logger.info("[Weather] Returning cached weather for %s,%s", lat, lon)
         return jsonify(cached)
 
     # Try met.no first
@@ -230,7 +230,9 @@ def get_weather(lat: str, lon: str):
         set_cached_weather(lat, lon, weather_data)
         return jsonify(weather_data)
     except Exception as e:  # pylint: disable=broad-except
-        G.logger.warning("Met.no API failed, falling back to open-meteo: %s", e)
+        G.logger.warning(
+            "[Weather] Met.no API failed, falling back to open-meteo: %s", e
+        )
 
     # Fallback to open-meteo
     try:
@@ -250,5 +252,5 @@ def get_weather(lat: str, lon: str):
         set_cached_weather(lat, lon, weather_data)
         return jsonify(weather_data)
     except Exception as e:  # pylint: disable=broad-except
-        G.logger.info("All weather APIs failed: %s", e)
+        G.logger.info("[Weather] All weather APIs failed: %s", e)
         return jsonify({"error": "Unable to fetch weather data"}), 503

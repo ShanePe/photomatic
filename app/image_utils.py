@@ -5,9 +5,10 @@ resizing to configured limits, drawing optional overlay text, and
 writing/reading cached JPEGs under the Flask instance cache directory.
 """
 
+import atexit
 import hashlib
 import os
-import atexit
+import time
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import requests
@@ -123,7 +124,7 @@ def resize_and_compress(
     Returns the path to the cached JPEG file.
     Ensures proper resource cleanup even on exceptions.
     """
-
+    start_time = time.perf_counter()
     overlays = overlays or {}
 
     key_hash = hashlib.md5(path.encode()).hexdigest()
@@ -132,7 +133,9 @@ def resize_and_compress(
     # --- Cache check ---
     if os.path.exists(cache_file):
         G.logger.info(
-            "Cache hit for %s (size %.1f KB)", path, os.path.getsize(cache_file) / 1024
+            "[ImageProcessor] Cache hit for %s (size %.1f KB)",
+            path,
+            os.path.getsize(cache_file) / 1024,
         )
         return cache_file
 
@@ -140,12 +143,27 @@ def resize_and_compress(
     rgb_img = None
     transposed_img = None
     transposed_is_copy = False
+    original_width, original_height = 0, 0
+    final_width, final_height = 0, 0
+    was_resized = False
+    was_transposed = False
+
+    G.logger.info(
+        "[ImageProcessor] Processing image: %s | Size: %.1f KB | Hash: %s",
+        os.path.basename(path),
+        original_size / 1024,
+        key_hash,
+    )
 
     try:
         with Image.open(path) as img:
+            original_width, original_height = img.size
+            original_mode = img.mode
+
             # exif_transpose may return a new image or the same image
             transposed_img = ImageOps.exif_transpose(img)
             transposed_is_copy = transposed_img is not img
+            was_transposed = transposed_is_copy
             # Use transposed image for processing (may be same as img)
             work_img = transposed_img if transposed_is_copy else img
 
@@ -154,6 +172,7 @@ def resize_and_compress(
                 work_img.thumbnail(
                     (G.MAX_WIDTH, G.MAX_HEIGHT), Image.Resampling.LANCZOS
                 )
+                was_resized = True
 
             # Apply overlay text
             if overlays:
@@ -184,20 +203,44 @@ def resize_and_compress(
                 transposed_img = None
 
         compressed_size = os.path.getsize(cache_file)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        compression_ratio = (
+            (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
+        )
 
         G.logger.info(
-            "Processed %s | Original: %.1f KB | Compressed: %.1f KB | Overlays: %s",
+            "[ImageProcessor] Completed %s | %dx%d (%s) -> %dx%d (JPEG) | "
+            "%.1f KB -> %.1f KB (%.1f%% reduction) | "
+            "Resized: %s | Transposed: %s | Overlays: %d | "
+            "Quality: %d | Time: %.1f ms | Cache: %d items",
             os.path.basename(path),
+            original_width,
+            original_height,
+            original_mode,
+            final_width,
+            final_height,
             original_size / 1024,
             compressed_size / 1024,
-            overlays,
+            compression_ratio,
+            "Yes" if was_resized else "No",
+            "Yes" if was_transposed else "No",
+            len(overlays),
+            quality,
+            elapsed_ms,
+            G.CACHE_COUNT,
         )
 
         prune_cache()
 
         return cache_file
     except Exception as e:
-        G.logger.error("Error processing image %s: %s", path, e)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        G.logger.error(
+            "[ImageProcessor] Error processing %s after %.1f ms: %s",
+            os.path.basename(path),
+            elapsed_ms,
+            e,
+        )
         raise e
     finally:
         # Cleanup in case of exception - close any remaining open images
