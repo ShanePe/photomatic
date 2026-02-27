@@ -137,20 +137,30 @@ def resize_and_compress(
         return cache_file
 
     original_size = os.path.getsize(path)
+    rgb_img = None
+    transposed_img = None
+    transposed_is_copy = False
+
     try:
         with Image.open(path) as img:
-            img = ImageOps.exif_transpose(img)
+            # exif_transpose may return a new image or the same image
+            transposed_img = ImageOps.exif_transpose(img)
+            transposed_is_copy = transposed_img is not img
+            # Use transposed image for processing (may be same as img)
+            work_img = transposed_img if transposed_is_copy else img
 
-            width, height = img.size
+            width, height = work_img.size
             if width > G.MAX_WIDTH or height > G.MAX_HEIGHT:
-                img.thumbnail((G.MAX_WIDTH, G.MAX_HEIGHT), Image.Resampling.LANCZOS)
+                work_img.thumbnail(
+                    (G.MAX_WIDTH, G.MAX_HEIGHT), Image.Resampling.LANCZOS
+                )
 
             # Apply overlay text
             if overlays:
-                apply_overlays(img, overlays)
+                apply_overlays(work_img, overlays)
 
-            # Save to cache
-            rgb_img = img.convert("RGB")
+            # Save to cache - convert creates a new image
+            rgb_img = work_img.convert("RGB")
             rgb_img.save(
                 cache_file,
                 format="JPEG",
@@ -165,6 +175,13 @@ def resize_and_compress(
 
             with G.get_cache_lock():
                 G.CACHE_COUNT += 1
+
+            # Close intermediate images inside the with block while we have valid references
+            rgb_img.close()
+            rgb_img = None
+            if transposed_is_copy and transposed_img is not None:
+                transposed_img.close()
+                transposed_img = None
 
         compressed_size = os.path.getsize(cache_file)
 
@@ -182,3 +199,15 @@ def resize_and_compress(
     except Exception as e:
         G.logger.error("Error processing image %s: %s", path, e)
         raise e
+    finally:
+        # Cleanup in case of exception - close any remaining open images
+        if rgb_img is not None:
+            try:
+                rgb_img.close()
+            except Exception:  # pylint: disable=broad-except
+                pass
+        if transposed_is_copy and transposed_img is not None:
+            try:
+                transposed_img.close()
+            except Exception:  # pylint: disable=broad-except
+                pass

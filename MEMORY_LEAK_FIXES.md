@@ -99,6 +99,32 @@ Identified and fixed 6 critical memory leaks and optimization issues in the Phot
 
 ---
 
+### 4b. **Intermediate Image Objects Not Closed (HIGH)**
+
+**Location:** `app/image_utils.py` - `resize_and_compress()` function
+
+**Problem:**
+
+- `ImageOps.exif_transpose(img)` can return a NEW image object (not the original)
+- `img.convert("RGB")` always creates a NEW image object
+- These intermediate images were never explicitly closed
+- PIL image objects can hold large byte arrays in memory
+- Python's garbage collector doesn't always free them immediately
+- Memory grows with each new image processed, never coming back down
+
+**Fix Applied:**
+
+- Track intermediate images (`transposed_img`, `rgb_img`) explicitly
+- Use `transposed_is_copy` flag to track if transpose created a new image
+- Close `rgb_img` immediately after saving (while still in `with` block)
+- Close `transposed_img` if it's a copy of the original
+- Added `finally` block for cleanup on exceptions
+- Set references to `None` after closing to prevent double-close
+
+**Impact:** Immediate memory release after processing each image - memory should stabilize rather than grow continuously
+
+---
+
 ### 5. **Missing Cache Lock (Thread-Safety Issue)**
 
 **Location:** `app/globals.py`, `app/cache_manager.py`, `app/image_utils.py`
