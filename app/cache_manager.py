@@ -167,6 +167,7 @@ def prune_cache():
     Prune the photo cache directory so total cached files <= G.CACHE_LIMIT.
 
     Preserves keys found in `G.SAME_DAY_KEYS`.
+    Also removes any orphaned metadata files.
     Thread-safe operation using lock.
     """
     with G.get_cache_lock():
@@ -175,7 +176,7 @@ def prune_cache():
 
         heap = []
         for fn in os.listdir(G.CACHE_DIR_PHOTO):
-            if fn.startswith("."):
+            if fn.startswith(".") or fn.endswith(".json"):
                 continue
             f = os.path.join(G.CACHE_DIR_PHOTO, fn)
             if not os.path.isfile(f):
@@ -191,10 +192,48 @@ def prune_cache():
                 continue
             try:
                 os.remove(f)
+                # Also remove the sidecar metadata file if it exists
+                meta_file = f + ".json"
+                if os.path.exists(meta_file):
+                    os.remove(meta_file)
                 G.CACHE_COUNT -= 1
                 G.logger.info("Cache pruned: removed %s", f)
             except OSError:
                 G.logger.warning("Failed to remove cache file %s", f)
+
+    # Clean up any orphaned metadata files (runs outside the lock for perf)
+    prune_orphaned_metadata()
+
+
+def prune_orphaned_metadata():
+    """
+    Remove orphaned .json metadata files in the photo cache directory.
+
+    A metadata file is considered orphaned if its corresponding image
+    file (.jpg) no longer exists. This prevents accumulation of stale
+    metadata files over time.
+
+    Thread-safe operation using lock.
+    """
+    with G.get_cache_lock():
+        removed_count = 0
+        for fn in os.listdir(G.CACHE_DIR_PHOTO):
+            if not fn.endswith(".json"):
+                continue
+            meta_path = os.path.join(G.CACHE_DIR_PHOTO, fn)
+            # Corresponding image file: e.g., abc123.jpg.json -> abc123.jpg
+            image_path = meta_path[:-5]  # Remove .json suffix
+            if not os.path.exists(image_path):
+                try:
+                    os.remove(meta_path)
+                    removed_count += 1
+                except OSError:
+                    G.logger.warning(
+                        "Failed to remove orphaned metadata: %s", meta_path
+                    )
+
+        if removed_count > 0:
+            G.logger.info("Pruned %d orphaned metadata files", removed_count)
 
 
 def clear_directory(path):
@@ -267,7 +306,7 @@ def clear_entire_cache():
 
         # 3. Reset globals
         G.CACHE_COUNT = 0
-        G.SAME_DAY_KEYS = []
+        G.SAME_DAY_KEYS = set()
         G.CACHE_DATE = None
 
         G.logger.info(
@@ -316,7 +355,7 @@ def build_cache(base_dir):
     """
     G.CACHE_DATE = None
     G.BUILDING_CACHE = True
-    G.SAME_DAY_KEYS = []
+    G.SAME_DAY_KEYS = set()
 
     try:
         today = datetime.date.today()
@@ -343,7 +382,7 @@ def build_cache(base_dir):
                         ):
                             f_same.write(path + "\n")
                             key_hash = hashlib.md5(path.encode()).hexdigest()
-                            G.SAME_DAY_KEYS.append(key_hash)
+                            G.SAME_DAY_KEYS.add(key_hash)
                         else:
                             f_all.write(path + "\n")
 

@@ -1,15 +1,22 @@
+"""Tests for Flask application routes.
+
+Validates HTTP endpoints including the /random image serving route.
+"""
+
 import os
-from app import app as app_pkg
-import app.app  # ensure routes are registered
+
+from PIL import Image
+
+import app.routes  # noqa: F401 pylint: disable=unused-import
 from app import cache_manager
 from app import globals as G
 
 
 def test_random_route_serves_image(tmp_path):
+    """Test that the /random route serves an image with correct content type."""
     photos = tmp_path / "photos"
     photos.mkdir()
     # create a simple image
-    from PIL import Image
 
     img = Image.new("RGB", (120, 90), (10, 20, 30))
     img_path = photos / "pic.jpg"
@@ -25,9 +32,6 @@ def test_random_route_serves_image(tmp_path):
 
     # build cache then run test client
     cache_manager.build_cache(str(photos))
-
-    # ensure routes are registered on the Flask app
-    import app.app  # noqa: F401
 
     client = G.app.test_client()
     resp = client.get("/random")

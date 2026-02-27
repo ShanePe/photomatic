@@ -58,8 +58,8 @@ LOG_DIR_NAME = "log"
 LOG_FILENAME = "photomatic.log"
 
 # Keys used by prune_cache() and populated at runtime with MD5 keys for
-# same-day images that must be preserved. Must be a mutable list.
-SAME_DAY_KEYS = []
+# same-day images that must be preserved. Using set for O(1) lookup.
+SAME_DAY_KEYS: set[str] = set()
 
 # Flask session keys used by the slideshow
 SESSION_INITIALIZED = "initialized"

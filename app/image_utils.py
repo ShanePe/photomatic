@@ -39,6 +39,11 @@ FONT_PATH = os.path.join(
     os.path.dirname(__file__), "assets", "fonts", "NotoSans-Regular.ttf"
 )
 
+# Font cache to avoid repeated disk reads and object creation
+# LRU-style: keep only a few common sizes (keyed by font_size)
+_FONT_CACHE: dict[int, ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
+_MAX_FONT_CACHE = 10  # Typically only 1-2 sizes used
+
 
 def draw_text(draw, font, text, x, y):
     """Draw text with a drop shadow, matching original behaviour."""
@@ -47,13 +52,26 @@ def draw_text(draw, font, text, x, y):
 
 
 def load_scaled_font(height, scale=0.01):
-    """Load a truetype font scaled to image height."""
+    """Load a truetype font scaled to image height, using cache."""
     font_size = max(12, int(height * scale))
 
+    # Return cached font if available
+    if font_size in _FONT_CACHE:
+        return _FONT_CACHE[font_size]
+
+    # Load font and cache it
     try:
-        return ImageFont.truetype(FONT_PATH, font_size)
+        font = ImageFont.truetype(FONT_PATH, font_size)
     except OSError:
-        return ImageFont.load_default()
+        font = ImageFont.load_default()
+
+    # Enforce cache limit (simple FIFO eviction)
+    if len(_FONT_CACHE) >= _MAX_FONT_CACHE:
+        oldest_key = next(iter(_FONT_CACHE))
+        del _FONT_CACHE[oldest_key]
+
+    _FONT_CACHE[font_size] = font
+    return font
 
 
 def apply_overlays(img, overlays: dict[str, str]):
@@ -157,11 +175,6 @@ def resize_and_compress(
             compressed_size / 1024,
             overlays,
         )
-
-        # Optionally force garbage collection after large image ops
-        import gc
-
-        gc.collect()
 
         prune_cache()
 

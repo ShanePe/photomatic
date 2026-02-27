@@ -1,3 +1,8 @@
+"""Pytest configuration and fixtures.
+
+Ensures the app package is importable from tests.
+"""
+
 import os
 import sys
 
