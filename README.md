@@ -34,12 +34,12 @@ Photomatic serves images from a local directory and displays them in a fullscree
 
 Run the application with:
 
-python app/app.py --photos /path/to/your/photos --port 5000
+python -m app.app
 
-Arguments:
+Configure startup settings in `app/config.yaml`:
 
-- --photos: Required. Path to the base folder containing your images
-- --port: Optional. Port to run the server on (default: 5000)
+- app.photo_dir: Path to the base folder containing your images
+- app.port: Port to run the server on
 
 Open your browser at:  
 http://localhost:5000
@@ -58,7 +58,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 EXPOSE 5000
-CMD ["python", "app/app.py", "--photos", "/photos", "--port", "5000"]
+CMD ["python", "-m", "app.app"]
 
 requirements.txt:
 flask

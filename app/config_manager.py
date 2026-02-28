@@ -10,6 +10,15 @@ import os
 import yaml
 
 DEFAULT_CONFIG = {
+    "app": {
+        "photo_dir": "/app/photo-storage",
+        "port": 5050,
+    },
+    "paths": {
+        "cache_dir": "cache",
+        "photo_cache_dir": "cache/photos",
+        "log_dir": "log",
+    },
     "image": {
         "max_width": 2080,
         "max_height": 768,
@@ -37,8 +46,12 @@ def load_config(path="config.yaml"):
     # Deep copy nested dicts
     config = {section: values.copy() for section, values in DEFAULT_CONFIG.items()}
 
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
+    config_path = path
+    if path == "config.yaml" and not os.path.exists(config_path):
+        config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
             file_cfg = yaml.safe_load(f) or {}
 
             for section, values in file_cfg.items():

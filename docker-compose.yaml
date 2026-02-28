@@ -17,5 +17,5 @@ services:
       FLASK_ENV: production
       PORT: 5050
     restart: unless-stopped
- # Override the default CMD in your Dockerfile
-    command: python3 app/app.py --photos "/app/photo-storage" --port "5050"
+    # Override the default CMD in your Dockerfile
+    command: python3 -m app.app

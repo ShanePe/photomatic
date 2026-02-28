@@ -32,6 +32,22 @@ register_heif_opener()
 # Load configuration from config.yaml
 CONFIG = load_config()
 
+
+def _resolve_configured_dir(
+    config_path: str | None, instance_root: str, fallback: str
+) -> str:
+    """Resolve configured directory path.
+
+    - Absolute config paths are used as-is.
+    - Relative config paths are resolved under `instance_root`.
+    - Empty/None config values fall back to `fallback` under `instance_root`.
+    """
+    base = Path(instance_root)
+    path_value = config_path or fallback
+    configured = Path(path_value)
+    return str(configured if configured.is_absolute() else (base / configured))
+
+
 # Image processing settings
 MAX_WIDTH = CONFIG["image"]["max_width"]
 MAX_HEIGHT = CONFIG["image"]["max_height"]
@@ -40,11 +56,21 @@ MAX_HEIGHT = CONFIG["image"]["max_height"]
 CACHE_LIMIT = CONFIG["cache"]["limit"]
 SAME_DAY_CYCLE = CONFIG["cache"]["same_day_cycle"]
 
+PATHS_CONFIG = CONFIG["paths"]
+
 # Cache directory is inside the app's instance_path (writable area for the app)
-CACHE_DIR = os.path.join(app.instance_path, "cache")
-CACHE_DIR_PHOTO = os.path.join(CACHE_DIR, "photos")
+CACHE_DIR = _resolve_configured_dir(
+    PATHS_CONFIG.get("cache_dir"), app.instance_path, "cache"
+)
+CACHE_DIR_PHOTO = _resolve_configured_dir(
+    PATHS_CONFIG.get("photo_cache_dir"),
+    app.instance_path,
+    os.path.join("cache", "photos"),
+)
 CACHE_DIR_ICON = os.path.join(CACHE_DIR, "icons")
-CACHE_DIR_LOG = os.path.join(app.instance_path, "log")
+CACHE_DIR_LOG = _resolve_configured_dir(
+    PATHS_CONFIG.get("log_dir"), app.instance_path, "log"
+)
 
 # Cache layout and filenames (must match expectations in app code)
 CACHE_DIR_NAME = "cache"
@@ -84,11 +110,17 @@ def ensure_instance_dirs(instance_root):
 
     Raises OSError on failure.
     """
-    root = _normalize_instance_path(instance_root)
-    (root / CACHE_DIR_NAME).mkdir(parents=True, exist_ok=True)
-    (root / CACHE_DIR_NAME / CACHE_PHOTOS_SUBDIR).mkdir(parents=True, exist_ok=True)
-    (root / CACHE_DIR_NAME / CACHE_ICONS_SUBDIR).mkdir(parents=True, exist_ok=True)
-    (root / LOG_DIR_NAME).mkdir(parents=True, exist_ok=True)
+    root = str(_normalize_instance_path(instance_root))
+    cache_dir = _resolve_configured_dir(PATHS_CONFIG.get("cache_dir"), root, "cache")
+    photo_cache_dir = _resolve_configured_dir(
+        PATHS_CONFIG.get("photo_cache_dir"), root, os.path.join("cache", "photos")
+    )
+    log_dir = _resolve_configured_dir(PATHS_CONFIG.get("log_dir"), root, "log")
+
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    Path(photo_cache_dir).mkdir(parents=True, exist_ok=True)
+    Path(os.path.join(cache_dir, CACHE_ICONS_SUBDIR)).mkdir(parents=True, exist_ok=True)
+    Path(log_dir).mkdir(parents=True, exist_ok=True)
 
 
 # Create cache directories

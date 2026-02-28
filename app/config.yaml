@@ -1,6 +1,15 @@
+app:
+  photo_dir: /app/photo-storage
+  port: 5050
+
+paths:
+  cache_dir: cache
+  photo_cache_dir: cache/photos
+  log_dir: log
+
 cache:
   limit: 2000
-  cycle: 100
+  same_day_cycle: 100
 image:
   max_width: 2080
   max_height: 768

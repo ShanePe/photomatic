@@ -55,3 +55,25 @@ def test_get_cache_lock_returns_lock():
     # Should be usable as context manager
     with lock:
         pass  # Should not raise
+
+
+def test_ensure_instance_dirs_uses_configured_relative_paths(tmp_path):
+    """Ensure configured relative cache/log paths are resolved under instance root."""
+    inst = str(tmp_path / "instance_custom")
+
+    original_paths = G.PATHS_CONFIG.copy()
+    try:
+        G.PATHS_CONFIG = {
+            "cache_dir": "runtime-cache",
+            "photo_cache_dir": "runtime-cache/photos2",
+            "log_dir": "runtime-log",
+        }
+
+        G.ensure_instance_dirs(inst)
+
+        assert os.path.isdir(os.path.join(inst, "runtime-cache"))
+        assert os.path.isdir(os.path.join(inst, "runtime-cache", "photos2"))
+        assert os.path.isdir(os.path.join(inst, "runtime-cache", "icons"))
+        assert os.path.isdir(os.path.join(inst, "runtime-log"))
+    finally:
+        G.PATHS_CONFIG = original_paths
