@@ -130,7 +130,9 @@ def test_prune_cache_removes_metadata_with_image(tmp_path):
     _, cache_dir_photo = setup_cache_dirs(tmp_path)
 
     # Set a low cache limit
+    original_limit_enabled = G.CACHE_LIMIT_ENABLED
     original_limit = G.CACHE_LIMIT
+    G.CACHE_LIMIT_ENABLED = True
     G.CACHE_LIMIT = 1
     G.CACHE_COUNT = 3
     G.SAME_DAY_KEYS = set()
@@ -157,7 +159,8 @@ def test_prune_cache_removes_metadata_with_image(tmp_path):
     # Metadata count should match or be less than image count
     assert len(remaining_meta) <= len(remaining_images)
 
-    # Restore original limit
+    # Restore original values
+    G.CACHE_LIMIT_ENABLED = original_limit_enabled
     G.CACHE_LIMIT = original_limit
 
 

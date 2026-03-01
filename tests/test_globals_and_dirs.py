@@ -13,22 +13,40 @@ def test_ensure_instance_dirs_creates(tmp_path):
     inst = str(tmp_path / "instance")
     # ensure dirs do not exist
     assert not os.path.exists(inst)
+    original_paths = G.PATHS_CONFIG.copy()
+    try:
+        G.PATHS_CONFIG = {
+            "cache_dir": "cache",
+            "photo_cache_dir": "cache/photos",
+            "log_dir": "log",
+        }
 
-    G.ensure_instance_dirs(inst)
+        G.ensure_instance_dirs(inst)
 
-    assert os.path.isdir(os.path.join(inst, "cache"))
-    assert os.path.isdir(os.path.join(inst, "cache", "photos"))
-    assert os.path.isdir(os.path.join(inst, "log"))
+        assert os.path.isdir(os.path.join(inst, "cache"))
+        assert os.path.isdir(os.path.join(inst, "cache", "photos"))
+        assert os.path.isdir(os.path.join(inst, "log"))
+    finally:
+        G.PATHS_CONFIG = original_paths
 
 
 def test_ensure_instance_dirs_creates_icons_subdir(tmp_path):
     """Test that ensure_instance_dirs also creates icons subdirectory."""
     inst = str(tmp_path / "instance_icons")
     assert not os.path.exists(inst)
+    original_paths = G.PATHS_CONFIG.copy()
+    try:
+        G.PATHS_CONFIG = {
+            "cache_dir": "cache",
+            "photo_cache_dir": "cache/photos",
+            "log_dir": "log",
+        }
 
-    G.ensure_instance_dirs(inst)
+        G.ensure_instance_dirs(inst)
 
-    assert os.path.isdir(os.path.join(inst, "cache", "icons"))
+        assert os.path.isdir(os.path.join(inst, "cache", "icons"))
+    finally:
+        G.PATHS_CONFIG = original_paths
 
 
 def test_same_day_keys_is_set_type():
