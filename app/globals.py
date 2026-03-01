@@ -53,6 +53,7 @@ MAX_WIDTH = CONFIG["image"]["max_width"]
 MAX_HEIGHT = CONFIG["image"]["max_height"]
 
 # Cache settings
+CACHE_LIMIT_ENABLED = CONFIG["cache"]["limit_enabled"]
 CACHE_LIMIT = CONFIG["cache"]["limit"]
 SAME_DAY_CYCLE = CONFIG["cache"]["same_day_cycle"]
 

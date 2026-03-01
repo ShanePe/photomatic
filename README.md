@@ -38,7 +38,7 @@ python -m app.app
 
 Configure startup settings in `app/config.yaml`:
 
-- app.photo_dir: Path to the base folder containing your images
+- paths.photo_dir: Path to the base folder containing your images
 - app.port: Port to run the server on
 
 Open your browser at:  

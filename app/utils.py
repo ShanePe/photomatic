@@ -7,14 +7,15 @@ from .cache_manager import prune_cache
 def run_app():
     """Configure globals and run the Flask application.
 
-    Uses values from `config.yaml` (`app.photo_dir`, `app.port`), prunes the
+    Uses values from `config.yaml` (`paths.photo_dir`, `app.port`), prunes the
     cache if the on-disk cache exceeds the configured limit, and launches
     the Flask app.
     """
     app_cfg = G.CONFIG["app"]
-    G.PHOTO_ROOT = app_cfg["photo_dir"]
+    paths_cfg = G.CONFIG["paths"]
+    G.PHOTO_ROOT = paths_cfg["photo_dir"]
 
-    if G.CACHE_COUNT > G.CACHE_LIMIT:
+    if G.CACHE_LIMIT_ENABLED and G.CACHE_COUNT > G.CACHE_LIMIT:
         G.logger.info(
             "Initial cache count: %s, pruning to limit %s", G.CACHE_COUNT, G.CACHE_LIMIT
         )

@@ -1,4 +1,5 @@
 app:
+<<<<<<< HEAD
   photo_dir: /photos
   port: 5050
 
@@ -6,8 +7,18 @@ paths:
   cache_dir: /cache
   photo_cache_dir: /cache/photos
   log_dir: /logs
+=======
+  port: 5050
+
+paths:
+  photo_dir: /app/photo-storage
+  cache_dir: cache
+  photo_cache_dir: cache/photos
+  log_dir: log
+>>>>>>> bbe8bed (Add cache limit toggle and move photo_dir to paths config)
 
 cache:
+  limit_enabled: true
   limit: 2000
   same_day_cycle: 100
 image:

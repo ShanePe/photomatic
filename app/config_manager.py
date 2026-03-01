@@ -11,10 +11,10 @@ import yaml
 
 DEFAULT_CONFIG = {
     "app": {
-        "photo_dir": "/app/photo-storage",
         "port": 5050,
     },
     "paths": {
+        "photo_dir": "/app/photo-storage",
         "cache_dir": "cache",
         "photo_cache_dir": "cache/photos",
         "log_dir": "log",
@@ -24,6 +24,7 @@ DEFAULT_CONFIG = {
         "max_height": 768,
     },
     "cache": {
+        "limit_enabled": True,
         "limit": 2000,
         "same_day_cycle": 100,
     },

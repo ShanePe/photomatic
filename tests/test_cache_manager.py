@@ -177,3 +177,31 @@ def test_write_and_get_image_metadata(tmp_path):
     assert width == 800
     assert height == 600
     assert mime_type == "image/jpeg"
+
+
+def test_prune_cache_skips_when_limit_disabled(tmp_path):
+    """Test that prune_cache does nothing when cache limit is disabled."""
+    _, cache_dir_photo = setup_cache_dirs(tmp_path)
+
+    original_limit_enabled = G.CACHE_LIMIT_ENABLED
+    original_limit = G.CACHE_LIMIT
+    try:
+        G.CACHE_LIMIT_ENABLED = False
+        G.CACHE_LIMIT = 1
+        G.CACHE_COUNT = 3
+        G.SAME_DAY_KEYS = set()
+
+        for i in range(3):
+            img_path = os.path.join(cache_dir_photo, f"nolimit{i}.jpg")
+            make_image(img_path)
+
+        cache_manager.prune_cache()
+
+        remaining_images = [
+            f for f in os.listdir(cache_dir_photo) if f.endswith(".jpg")
+        ]
+        assert len(remaining_images) == 3
+        assert G.CACHE_COUNT == 3
+    finally:
+        G.CACHE_LIMIT_ENABLED = original_limit_enabled
+        G.CACHE_LIMIT = original_limit

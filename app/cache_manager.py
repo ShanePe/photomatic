@@ -182,6 +182,9 @@ def prune_cache():
     Also removes any orphaned metadata files.
     Thread-safe operation using lock.
     """
+    if not G.CACHE_LIMIT_ENABLED:
+        return
+
     with G.get_cache_lock():
         if G.CACHE_COUNT <= G.CACHE_LIMIT:
             return
