@@ -1,11 +1,11 @@
 app:
-  photo_dir: /app/photo-storage
+  photo_dir: /photos
   port: 5050
 
 paths:
-  cache_dir: cache
-  photo_cache_dir: cache/photos
-  log_dir: log
+  cache_dir: /cache
+  photo_cache_dir: /cache/photos
+  log_dir: /logs
 
 cache:
   limit: 2000
