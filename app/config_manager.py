@@ -11,7 +11,7 @@ import yaml
 
 DEFAULT_CONFIG = {
     "app": {
-        "port": 5050,
+        "port": 80,
     },
     "paths": {
         "photo_dir": "/app/photo-storage",

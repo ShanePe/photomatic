@@ -1,5 +1,5 @@
 app:
-  port: 5050
+  port: 80
 
 paths:
   photo_dir: /photos

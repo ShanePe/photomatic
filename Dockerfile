@@ -23,8 +23,8 @@ RUN mkdir -p /app/photo-storage \
 #     && chown -R flask:flask /app/instance
 # USER flask
 
-# Expose Flask/Gunicorn port (default 5000, can be overridden)
-EXPOSE 5050
+# Expose Flask/Gunicorn port
+EXPOSE 80
 
 # Default command: run app with settings from app/config.yaml
 CMD ["python3", "-m", "app.app"]
