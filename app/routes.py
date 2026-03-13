@@ -33,7 +33,7 @@ def _set_api_status(api_name, ok, error=None):
     _api_call_status[api_name]["ok"] = ok
     _api_call_status[api_name]["last_error"] = error
     if not ok and error:
-        G.logger.error(f"[Healthcheck] {api_name} API failed: {error}")
+        G.logger.error("[Healthcheck] %s API failed: %s", api_name, error)
 
 
 @G.app.route("/healthcheck")
@@ -79,7 +79,7 @@ def api_config():
         cfg = load_config()
         _set_api_status("config", True)
         return jsonify(cfg.get("client", {}))
-    except Exception as e:
+    except (OSError, ValueError, TypeError) as e:
         _set_api_status("config", False, str(e))
         return jsonify({"error": "Config load failed"}), 500
 
