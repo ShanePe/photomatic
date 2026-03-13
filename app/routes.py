@@ -19,6 +19,42 @@ from PIL import UnidentifiedImageError
 
 # Local imports
 from . import globals as G
+
+# Healthcheck API call status cache
+_api_call_status = {
+    "config": {"ok": True, "last_error": None},
+    "weather": {"ok": True, "last_error": None},
+    "icon": {"ok": True, "last_error": None},
+    "random": {"ok": True, "last_error": None},
+}
+
+
+def _set_api_status(api_name, ok, error=None):
+    _api_call_status[api_name]["ok"] = ok
+    _api_call_status[api_name]["last_error"] = error
+    if not ok and error:
+        G.logger.error(f"[Healthcheck] {api_name} API failed: {error}")
+
+
+@G.app.route("/healthcheck")
+def healthcheck():
+    failed = [name for name, status in _api_call_status.items() if not status["ok"]]
+    if failed:
+        return (
+            jsonify(
+                {
+                    "status": "fail",
+                    "failed": failed,
+                    "details": {
+                        k: v for k, v in _api_call_status.items() if not v["ok"]
+                    },
+                }
+            ),
+            500,
+        )
+    return jsonify({"status": "ok", "cache": _api_call_status})
+
+
 from .cache_manager import (
     clear_entire_cache,
     format_date_with_suffix,
@@ -39,9 +75,13 @@ from .config_manager import load_config
 @G.app.route("/api/config")
 def api_config():
     """API endpoint to return client configuration settings."""
-    cfg = load_config()
-
-    return jsonify(cfg.get("client", {}))
+    try:
+        cfg = load_config()
+        _set_api_status("config", True)
+        return jsonify(cfg.get("client", {}))
+    except Exception as e:
+        _set_api_status("config", False, str(e))
+        return jsonify({"error": "Config load failed"}), 500
 
 
 @G.app.route("/favicon.ico")
@@ -81,10 +121,12 @@ def random_image():
     """
     try:
         if G.BUILDING_CACHE:
+            _set_api_status("random", False, "Cache is being built")
             return "Cache is being built, please try again shortly.", 503
 
         path = pick_file(G.PHOTO_ROOT)
         if not path:
+            _set_api_status("random", False, "No images found")
             return "No images found", 404
 
         client_ip = request.remote_addr
@@ -124,10 +166,12 @@ def random_image():
             session.get("photo_served"),
         )
 
+        _set_api_status("random", True)
         return send_file(cache_file, mimetype="image/jpeg")
 
     except (OSError, UnidentifiedImageError, ValueError) as e:
         G.logger.error("[Routes] Error serving image: %s", e)
+        _set_api_status("random", False, str(e))
         return f"Error: {e}", 500
 
 
@@ -180,6 +224,7 @@ def cache_icon():
 
     # If cached, return immediately
     if os.path.exists(local_path):
+        _set_api_status("icon", True)
         return jsonify({"path": relative_path})
 
     # Download and cache
@@ -189,11 +234,14 @@ def cache_icon():
         if r.status_code == 200:
             with open(local_path, "wb") as f:
                 f.write(r.content)
+            _set_api_status("icon", True)
             return jsonify({"path": relative_path})
         else:
+            _set_api_status("icon", False, f"Status code {r.status_code}")
             return jsonify({"error": "Failed to fetch icon"}), 500
     except (OSError, IOError, ValueError) as e:
         G.logger.error("[Icons] Error caching icon from %s: %s", full_url, e)
+        _set_api_status("icon", False, str(e))
         return jsonify({"error": "Failed to fetch icon"}), 500
 
 
@@ -221,6 +269,7 @@ def get_weather(lat: str, lon: str):
     cached = get_cached_weather(lat, lon)
     if cached:
         G.logger.info("[Weather] Returning cached weather for %s,%s", lat, lon)
+        _set_api_status("weather", True)
         return jsonify(cached)
 
     # Try met.no first
@@ -242,6 +291,7 @@ def get_weather(lat: str, lon: str):
             "condition": map_metno_symbol(symbol_code),
         }
         set_cached_weather(lat, lon, weather_data)
+        _set_api_status("weather", True)
         return jsonify(weather_data)
     except Exception as e:  # pylint: disable=broad-except
         G.logger.warning(
@@ -264,7 +314,9 @@ def get_weather(lat: str, lon: str):
             "condition": map_openmeteo_code(code),
         }
         set_cached_weather(lat, lon, weather_data)
+        _set_api_status("weather", True)
         return jsonify(weather_data)
     except Exception as e:  # pylint: disable=broad-except
         G.logger.info("[Weather] All weather APIs failed: %s", e)
+        _set_api_status("weather", False, str(e))
         return jsonify({"error": "Unable to fetch weather data"}), 503
