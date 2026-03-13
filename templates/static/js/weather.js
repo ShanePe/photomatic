@@ -53,10 +53,39 @@ export async function updateWeather(cfg) {
 }
 
 export function initWeather(cfg) {
-  updateWeather(cfg);
   let intervalMs = 600000; // default 10 minutes
   if (cfg && typeof cfg.weather_update_interval === 'number') {
     intervalMs = cfg.weather_update_interval * 1000;
   }
-  setInterval(() => updateWeather(cfg), intervalMs);
+
+  let retryIntervalMs = 60000; // 1 minute for retry
+  let intervalId = null;
+
+  async function scheduleWeatherUpdate(retryMode = false) {
+    try {
+      await updateWeather(cfg);
+      // If successful and in retry mode, switch back to normal interval
+      if (retryMode) {
+        clearInterval(intervalId);
+        intervalId = setInterval(
+          () => scheduleWeatherUpdate(false),
+          intervalMs,
+        );
+      }
+    } catch (err) {
+      // If failed and not already in retry mode, switch to retry interval
+      if (!retryMode) {
+        clearInterval(intervalId);
+        intervalId = setInterval(
+          () => scheduleWeatherUpdate(true),
+          retryIntervalMs,
+        );
+      }
+    }
+  }
+
+  // Start with normal interval
+  intervalId = setInterval(() => scheduleWeatherUpdate(false), intervalMs);
+  // Run immediately
+  scheduleWeatherUpdate(false);
 }

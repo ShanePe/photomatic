@@ -40,14 +40,14 @@ def load_config(path="config.yaml"):
         with open(config_path, "r", encoding="utf-8") as f:
             main_cfg = yaml.safe_load(f) or {}
 
-    # Load local config if present
-    local_path = os.path.join(os.path.dirname(__file__), "config.local.yaml")
-    local_cfg = {}
-    if os.path.exists(local_path):
-        with open(local_path, "r", encoding="utf-8") as f:
-            local_cfg = yaml.safe_load(f) or {}
-
+    # Only merge local config if loading the default config.yaml
     merged = main_cfg
-    if local_cfg:
-        merged = deep_merge(merged, local_cfg)
+    if path == "config.yaml":
+        local_path = os.path.join(os.path.dirname(__file__), "config.local.yaml")
+        local_cfg = {}
+        if os.path.exists(local_path):
+            with open(local_path, "r", encoding="utf-8") as f:
+                local_cfg = yaml.safe_load(f) or {}
+        if local_cfg:
+            merged = deep_merge(merged, local_cfg)
     return merged
