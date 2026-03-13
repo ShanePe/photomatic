@@ -8,7 +8,7 @@ let preloadUrl = null;
 /**
  * Load a random image from the server and display it with a transition.
  */
-export async function loadImage(transitions) {
+export async function loadImage(transitions, kenBurns, photoSwitchMs) {
   try {
     const imgMain = document.getElementById('slideshow-main');
     const imgNext = document.getElementById('slideshow-next');
@@ -39,6 +39,7 @@ export async function loadImage(transitions) {
     const current = currentImg === 'main' ? imgMain : imgNext;
     const next = currentImg === 'main' ? imgNext : imgMain;
 
+
     // Set next image src and transition class
     next.src = url;
     next.className = `slideshow-img ${randomTransition}`;
@@ -50,11 +51,18 @@ export async function loadImage(transitions) {
     // Wait for transition out to finish (2s)
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
+
     // Now transition in the next image
     next.classList.add('show');
 
     // Wait for transition in to finish (2s)
     await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    // If Ken Burns is enabled, apply effect after transition in
+    if (kenBurns) {
+      next.classList.add('ken-burns');
+      next.style.setProperty('--kenburns-duration', `${photoSwitchMs}ms`);
+    }
 
     // Update background after full transition in
     const bgNum = currentImg === 'main' ? 2 : 1;
@@ -66,6 +74,10 @@ export async function loadImage(transitions) {
     );
     otherBg.classList.remove('show');
 
+
+    // Remove Ken Burns from previous image
+    current.classList.remove('ken-burns');
+    current.style.removeProperty('--kenburns-duration');
     // Hide the old image
     current.style.display = 'none';
 
@@ -93,9 +105,9 @@ export async function loadImage(transitions) {
 /**
  * Initialize slideshow with automatic image rotation.
  */
-export function initSlideshow(cfg) {
   const transitions =
     cfg && Array.isArray(cfg.transitions) ? cfg.transitions : [];
+  const kenBurns = cfg && cfg.ken_burns === true;
   // Show the main image at start
   const imgMain = document.getElementById('slideshow-main');
   imgMain.classList.add('show');
@@ -106,7 +118,7 @@ export function initSlideshow(cfg) {
   }
   // Start the first load after a short delay to allow DOM to settle
   setTimeout(() => {
-    loadImage(transitions);
-    setInterval(() => loadImage(transitions), intervalMs);
+    loadImage(transitions, kenBurns, intervalMs);
+    setInterval(() => loadImage(transitions, kenBurns, intervalMs), intervalMs);
   }, 500);
 }

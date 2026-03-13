@@ -118,6 +118,7 @@ client:
       snow: snowflake
       thunderstorms: cloud-lightning
   currentStyle: lucide
+  ken_burns: false # Set to true to enable Ken Burns effect
   weatherLocation:
     lat: 53.3
     lon: -6.4

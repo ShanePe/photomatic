@@ -1,8 +1,8 @@
 """Configuration loader for Photomatic.
 
-Provides `DEFAULT_CONFIG` and a safe `load_config()` helper that merges
-`config.yaml` values into defaults while ignoring unknown keys. Other
-modules import this at startup to obtain runtime settings.
+Loads YAML config (config.yaml + config.local.yaml) for all app settings.
+Client config section now supports a `ken_burns` flag to enable the Ken Burns effect (zoom+pan) on slideshow images.
+Other modules import this at startup to obtain runtime settings.
 """
 
 import os
