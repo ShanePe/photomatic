@@ -8,7 +8,8 @@
     transform: translate(-50%, -50%) scale(1) translateX(0px) translateY(0px);
   }
   100% {
-    transform: translate(-45%, -55%) scale(1.15) translateX(20px) translateY(-20px);
+    transform: translate(-45%, -55%) scale(1.15) translateX(20px)
+      translateY(-20px);
   }
 }
 /* Slideshow image */

@@ -39,7 +39,6 @@ export async function loadImage(transitions, kenBurns, photoSwitchMs) {
     const current = currentImg === 'main' ? imgMain : imgNext;
     const next = currentImg === 'main' ? imgNext : imgMain;
 
-
     // Set next image src and transition class
     next.src = url;
     next.className = `slideshow-img ${randomTransition}`;
@@ -50,7 +49,6 @@ export async function loadImage(transitions, kenBurns, photoSwitchMs) {
 
     // Wait for transition out to finish (2s)
     await new Promise((resolve) => setTimeout(resolve, 2000));
-
 
     // Now transition in the next image
     next.classList.add('show');
@@ -73,7 +71,6 @@ export async function loadImage(transitions, kenBurns, photoSwitchMs) {
       'background' + (bgNum === 1 ? 2 : 1),
     );
     otherBg.classList.remove('show');
-
 
     // Remove Ken Burns from previous image
     current.classList.remove('ken-burns');
@@ -105,6 +102,7 @@ export async function loadImage(transitions, kenBurns, photoSwitchMs) {
 /**
  * Initialize slideshow with automatic image rotation.
  */
+export function initSlideshow(cfg) {
   const transitions =
     cfg && Array.isArray(cfg.transitions) ? cfg.transitions : [];
   const kenBurns = cfg && cfg.ken_burns === true;
