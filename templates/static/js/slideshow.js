@@ -2,18 +2,19 @@
  * Slideshow management: loading images with transitions.
  */
 
-import { transitions } from './config.js';
-
 let currentBg = 1;
 
 /**
  * Load a random image from the server and display it with a transition.
  */
-export async function loadImage() {
+export async function loadImage(transitions) {
   try {
     const img = document.getElementById('slideshow');
+    transitions = transitions || [];
     const randomTransition =
-      transitions[Math.floor(Math.random() * transitions.length)];
+      transitions.length > 0
+        ? transitions[Math.floor(Math.random() * transitions.length)]
+        : '';
     img.className = randomTransition;
 
     const res = await fetch('/random');
@@ -61,7 +62,13 @@ export async function loadImage() {
 /**
  * Initialize slideshow with automatic image rotation.
  */
-export function initSlideshow() {
-  loadImage();
-  setInterval(loadImage, 30000); // Load new image every 30 seconds
+export function initSlideshow(cfg) {
+  const transitions =
+    cfg && Array.isArray(cfg.transitions) ? cfg.transitions : [];
+  loadImage(transitions);
+  let intervalMs = 30000;
+  if (cfg && typeof cfg.photo_switch_interval === 'number') {
+    intervalMs = cfg.photo_switch_interval * 1000;
+  }
+  setInterval(() => loadImage(transitions), intervalMs); // Load new image every interval
 }

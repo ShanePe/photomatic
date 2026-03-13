@@ -1,3 +1,5 @@
+# Ignore local config overrides
+app/config.local.yaml
 # --- Python ---
 __pycache__/
 *.py[cod]

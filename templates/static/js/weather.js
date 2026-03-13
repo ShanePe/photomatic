@@ -2,20 +2,14 @@
  * Weather display: fetching current weather and updating icons.
  */
 
-import {
-  iconStyles,
-  iconNames,
-  currentStyle,
-  weatherLocation,
-} from './config.js';
-
 /**
  * Get the cached icon URL for a given standardized condition.
  */
-async function getIconUrl(condition) {
-  const base = iconStyles[currentStyle];
+async function getIconUrl(condition, cfg) {
+  const base = cfg.iconStyles[cfg.currentStyle];
   const icon =
-    iconNames[currentStyle][condition] || iconNames[currentStyle]['cloudy'];
+    cfg.iconNames[cfg.currentStyle][condition] ||
+    cfg.iconNames[cfg.currentStyle]['cloudy'];
 
   const response = await fetch('/cache_icon', {
     method: 'POST',
@@ -30,8 +24,8 @@ async function getIconUrl(condition) {
 /**
  * Fetch weather from backend (which handles met.no with fallback to open-meteo).
  */
-async function fetchWeather() {
-  const { lat, lon } = weatherLocation;
+async function fetchWeather(cfg) {
+  const { lat, lon } = cfg.weatherLocation;
   const response = await fetch(`/api/weather/${lat}/${lon}`);
 
   if (!response.ok) {
@@ -45,23 +39,24 @@ async function fetchWeather() {
  * Fetch current weather and update the display.
  * Backend returns standardized condition name.
  */
-export async function updateWeather() {
+export async function updateWeather(cfg) {
   try {
-    const data = await fetchWeather();
+    const data = await fetchWeather(cfg);
 
     document.getElementById('weather-temp').textContent =
       Math.round(data.temp) + '°c';
     document.getElementById('weather-icon').style.backgroundImage =
-      await getIconUrl(data.condition);
+      await getIconUrl(data.condition, cfg);
   } catch (err) {
     console.warn('Weather update failed:', err);
   }
 }
 
-/**
- * Initialize weather display with automatic updates.
- */
-export function initWeather() {
-  updateWeather();
-  setInterval(updateWeather, 10 * 60 * 1000); // Update every 10 minutes
+export function initWeather(cfg) {
+  updateWeather(cfg);
+  let intervalMs = 600000; // default 10 minutes
+  if (cfg && typeof cfg.weather_update_interval === 'number') {
+    intervalMs = cfg.weather_update_interval * 1000;
+  }
+  setInterval(() => updateWeather(cfg), intervalMs);
 }

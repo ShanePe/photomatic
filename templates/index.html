@@ -27,13 +27,17 @@
     </div>
 
     <script type="module">
+      import { loadClientConfig } from '/static/js/config.js';
       import { initSlideshow } from '/static/js/slideshow.js';
       import { initDateTime } from '/static/js/datetime.js';
       import { initWeather } from '/static/js/weather.js';
 
-      initSlideshow();
-      initDateTime();
-      initWeather();
+      loadClientConfig().then((cfg) => {
+        console.log('Loaded client config:', cfg);
+        initSlideshow(cfg);
+        initDateTime();
+        initWeather(cfg);
+      });
     </script>
   </body>
 </html>

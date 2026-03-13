@@ -1,8 +1,12 @@
-"""Flask route handlers for the photo slideshow application."""
+"""
+Flask route handlers for the photo slideshow application.
+"""
 
+# Standard library imports
 import os
 from urllib.parse import urlparse
 
+# Third-party imports
 from flask import (
     jsonify,
     render_template,
@@ -13,6 +17,7 @@ from flask import (
 )
 from PIL import UnidentifiedImageError
 
+# Local imports
 from . import globals as G
 from .cache_manager import (
     clear_entire_cache,
@@ -28,6 +33,15 @@ from .weather_utils import (
     get_cached_weather,
     set_cached_weather,
 )
+from .config_manager import load_config
+
+
+@G.app.route("/api/config")
+def api_config():
+    """API endpoint to return client configuration settings."""
+    cfg = load_config()
+
+    return jsonify(cfg.get("client", {}))
 
 
 @G.app.route("/favicon.ico")
