@@ -10,6 +10,17 @@ import os
 import yaml
 
 
+def _resolve_config_path(path: str) -> str:
+    """Resolve a configuration file path.
+
+    If ``path`` is a directory, look for ``config.yaml`` inside it.
+    Returns the resolved candidate path.
+    """
+    if os.path.isdir(path):
+        return os.path.join(path, "config.yaml")
+    return path
+
+
 def deep_merge(base, override):
     """
     Recursively merge two dictionaries, with override taking precedence.
@@ -28,15 +39,24 @@ def load_config(path="config.yaml"):
     """
     Load YAML configuration, merging config.yaml and config.local.yaml if present.
     All keys from both files are included. Local config overrides main config.
+
+    Respects CONFIG_FILE environment variable to override the default config path.
+
     Returns:
         dict: merged configuration dictionary.
     """
+    # Check for CONFIG_FILE environment variable
+    env_config_path = os.environ.get("CONFIG_FILE")
+    if env_config_path:
+        path = env_config_path
+
     # Load main config
-    config_path = path
-    if path == "config.yaml" and not os.path.exists(config_path):
-        config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    config_path = _resolve_config_path(path)
+    default_config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    if not os.path.isfile(config_path):
+        config_path = _resolve_config_path(default_config_path)
     main_cfg = {}
-    if os.path.exists(config_path):
+    if os.path.isfile(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             main_cfg = yaml.safe_load(f) or {}
 

@@ -36,3 +36,29 @@ def test_load_config_uses_cache_limit_enabled_default(tmp_path):
 
     assert cfg["cache"]["limit"] == 25
     # limit_enabled is not set unless present in YAML, so only check for limit
+
+
+def test_load_config_accepts_directory_path(tmp_path):
+    """Test that passing a directory resolves to <dir>/config.yaml."""
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({"app": {"port": 8080}, "paths": {"photo_dir": "/photos"}}),
+        encoding="utf-8",
+    )
+
+    cfg = config_manager.load_config(str(tmp_path))
+
+    assert cfg["app"]["port"] == 8080
+    assert cfg["paths"]["photo_dir"] == "/photos"
+
+
+def test_load_config_invalid_path_falls_back_to_default(tmp_path):
+    """Test that a non-file config path falls back to the bundled default config."""
+    bad_path = tmp_path / "config.yaml"
+    bad_path.mkdir()
+
+    cfg = config_manager.load_config(str(bad_path))
+
+    assert "app" in cfg
+    assert "paths" in cfg
+    assert "image" in cfg

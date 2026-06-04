@@ -2,20 +2,27 @@ version: "3.9"
 
 services:
   photomatic:
-    build:
-      context: . 
-      dockerfile: Dockerfile
-    container_name: photomatic_app
-    network_mode: host
-    volumes:
-      # Persist logs and cache
-      - ./docker:/app/instance
-      # Persist photo storage
-      - /mnt/Pennicloud/Home/Photos:/app/photo-storage
+    image: shanepenn/photomatic:latest
+    container_name: photomatic
+    hostname: photomatic
+    domainname: home.lan
+    working_dir: /app
+    tty: true
+    stdin_open: true
+
     environment:
-      # Example environment variables (add your own as needed)
+      LANG: C.UTF-8
+      PYTHON_VERSION: 3.10.19
+      PYTHON_SHA256: c8f4a596572201d81dd7df91f70e177e19a70f1d489968b54b5fbbf29a97c076
       FLASK_ENV: production
       PORT: 80
+      CONFIG_FILE: /etc/photomatic/config.yaml
+
+    volumes:
+      - /mnt/Photos:/photos
+      - /mnt/Cache/photomatic:/cache
+      - /mnt/Logs/photomatic:/logs
+      - /opt/healthcheck:/healthcheck
+      - /opt/photomatic/config.yaml:/etc/photomatic/config.yaml
+
     restart: unless-stopped
-    # Override the default CMD in your Dockerfile
-    command: python3 -m app.app
