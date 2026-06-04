@@ -44,6 +44,23 @@ def _resolve_port(config_port):
         return config_port
 
 
+def initialize_app_state():
+    """Initialize runtime globals and perform startup housekeeping."""
+    paths_cfg = G.CONFIG["paths"]
+    G.PHOTO_ROOT = paths_cfg["photo_dir"]
+
+    redacted_config = redact_sensitive_values(G.CONFIG)
+    G.logger.info(
+        "Effective startup config:\n%s", json.dumps(redacted_config, indent=2)
+    )
+
+    if G.CACHE_LIMIT_ENABLED and G.CACHE_COUNT > G.CACHE_LIMIT:
+        G.logger.info(
+            "Initial cache count: %s, pruning to limit %s", G.CACHE_COUNT, G.CACHE_LIMIT
+        )
+        prune_cache()
+
+
 def run_app():
     """Configure globals and run the Flask application.
 
@@ -52,20 +69,9 @@ def run_app():
     the Flask app.
     """
     app_cfg = G.CONFIG["app"]
-    paths_cfg = G.CONFIG["paths"]
-    G.PHOTO_ROOT = paths_cfg["photo_dir"]
     effective_port = _resolve_port(app_cfg["port"])
 
-    redacted_config = redact_sensitive_values(G.CONFIG)
-    G.logger.info(
-        "Effective startup config:\n%s", json.dumps(redacted_config, indent=2)
-    )
+    initialize_app_state()
     G.logger.info("Effective port: %s", effective_port)
-
-    if G.CACHE_LIMIT_ENABLED and G.CACHE_COUNT > G.CACHE_LIMIT:
-        G.logger.info(
-            "Initial cache count: %s, pruning to limit %s", G.CACHE_COUNT, G.CACHE_LIMIT
-        )
-        prune_cache()
 
     G.app.run(debug=True, host="0.0.0.0", port=effective_port)

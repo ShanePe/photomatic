@@ -1,5 +1,8 @@
 """Tests for startup utility behavior."""
 
+import importlib
+import sys
+
 import app.utils as U
 
 
@@ -77,3 +80,43 @@ def test_redact_sensitive_values_masks_known_sensitive_keys():
     assert result["weather"]["token"] == "***REDACTED***"
     assert result["weather"]["enabled"] is True
     assert result["plain"] == "ok"
+
+
+def test_initialize_app_state_sets_photo_root(monkeypatch):
+    """Shared initialization should set PHOTO_ROOT from config paths."""
+    logger_stub = _LoggerStub()
+
+    monkeypatch.setattr(
+        U.G, "CONFIG", {"paths": {"photo_dir": "/photos"}, "app": {"port": 5000}}
+    )
+    monkeypatch.setattr(U.G, "logger", logger_stub)
+    monkeypatch.setattr(U.G, "CACHE_LIMIT_ENABLED", False)
+    monkeypatch.setattr(U.G, "CACHE_COUNT", 0)
+    monkeypatch.setattr(U.G, "CACHE_LIMIT", 10)
+    monkeypatch.setattr(U.G, "PHOTO_ROOT", None)
+
+    U.initialize_app_state()
+
+    assert U.G.PHOTO_ROOT == "/photos"
+
+
+def test_wsgi_import_initializes_photo_root(monkeypatch):
+    """Importing app.wsgi should initialize shared runtime state for Gunicorn."""
+    logger_stub = _LoggerStub()
+
+    monkeypatch.setattr(
+        U.G, "CONFIG", {"paths": {"photo_dir": "/photos"}, "app": {"port": 5000}}
+    )
+    monkeypatch.setattr(U.G, "logger", logger_stub)
+    monkeypatch.setattr(U.G, "CACHE_LIMIT_ENABLED", False)
+    monkeypatch.setattr(U.G, "CACHE_COUNT", 0)
+    monkeypatch.setattr(U.G, "CACHE_LIMIT", 10)
+    monkeypatch.setattr(U.G, "PHOTO_ROOT", None)
+    monkeypatch.setattr(U.G.app, "_got_first_request", False)
+
+    sys.modules.pop("app.wsgi", None)
+    import app.wsgi as wsgi  # noqa: F401
+
+    importlib.reload(wsgi)
+
+    assert U.G.PHOTO_ROOT == "/photos"
