@@ -1,0 +1,84 @@
+name: Docker Image CI
+
+on:
+  push:
+    branches: ['master']
+  pull_request:
+    branches: ['master']
+
+env:
+  CONT: photomatic
+
+jobs:
+  build-and-push:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        run: |
+          if [[ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]]; then
+            echo "DOCKERHUB_USERNAME is empty"
+            exit 1
+          fi
+
+          if [[ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]]; then
+            echo "DOCKERHUB_TOKEN is empty"
+            exit 1
+          fi
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }} .
+
+      - name: Tag Docker image
+        run: docker tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }} ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }}:latest
+
+      - name: Push Docker image
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }}:latest
+
+  redeploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Trigger Portainer redeploy webhook
+        run: |
+          HOOK="${{ secrets.PORTAINER_WEBHOOK }}"
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }}:latest"
+          JSON="{\"image\":\"${IMAGE}\",\"metadata\":{\"ctn_names\":\"${{ env.CONT }}\"}}"
+
+          if [[ -z "$HOOK" ]]; then
+            echo "PORTAINER_WEBHOOK is empty"
+            exit 1
+          fi
+
+          if [[ -z "$IMAGE" ]]; then
+            echo "Image output is empty"
+            exit 1
+          fi
+
+          echo "Redeploying stack with payload: $JSON"
+
+          STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Content-Type: application/json" \
+            -d "$JSON" \
+            "$HOOK")
+
+          echo "HTTP status: $STATUS"
+
+          if [[ "$STATUS" -lt 200 || "$STATUS" -ge 300 ]]; then
+            echo "Redeploy failed"
+            exit 1
+          fi
+
+          echo "Redeploy successful"
