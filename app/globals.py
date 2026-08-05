@@ -22,15 +22,41 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(BASE_DIR, "..", "templates")
 STATIC_DIR = os.path.join(BASE_DIR, "..", "templates", "static")
 
+# Load configuration from config.yaml
+CONFIG = load_config()
+
+
+def _resolve_secret_key() -> str:
+    """Resolve a stable Flask secret key for session signing.
+
+    Priority:
+      1. APP_SECRET_KEY environment variable
+      2. FLASK_SECRET_KEY environment variable
+      3. config app.secret_key
+      4. deterministic fallback value
+    """
+    app_secret = os.environ.get("APP_SECRET_KEY")
+    if app_secret:
+        return app_secret
+
+    flask_secret = os.environ.get("FLASK_SECRET_KEY")
+    if flask_secret:
+        return flask_secret
+
+    cfg_secret = CONFIG.get("app", {}).get("secret_key")
+    if cfg_secret:
+        return str(cfg_secret)
+
+    # Fallback keeps sessions consistent across worker processes.
+    return "photomatic-change-this-secret"
+
+
 # Initialize Flask app
 app = Flask(__name__, template_folder=TEMPLATE_DIR, static_folder=STATIC_DIR)
-app.secret_key = os.urandom(24)
+app.secret_key = _resolve_secret_key()
 
 # Register HEIF opener so Pillow can read HEIC files
 register_heif_opener()
-
-# Load configuration from config.yaml
-CONFIG = load_config()
 
 
 def _resolve_configured_dir(

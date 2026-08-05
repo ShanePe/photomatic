@@ -17,6 +17,7 @@ services:
       FLASK_ENV: production
       PORT: 80
       CONFIG_FILE: /etc/photomatic/config.yaml
+      APP_SECRET_KEY: ${APP_SECRET_KEY}
 
     volumes:
       - /mnt/Photos:/photos
