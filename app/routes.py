@@ -3,8 +3,10 @@ Flask route handlers for the photo slideshow application.
 """
 
 # Standard library imports
+import datetime
 import os
-from urllib.parse import urlparse
+from pathlib import Path
+from urllib.parse import quote, urlparse
 
 # Third-party imports
 from flask import (
@@ -34,6 +36,85 @@ def _set_api_status(api_name, ok, error=None):
     _api_call_status[api_name]["last_error"] = error
     if not ok and error:
         G.logger.error("[Healthcheck] %s API failed: %s", api_name, error)
+
+
+def _pluralize(value: int, unit: str) -> str:
+    return f"{value} {unit}" if value == 1 else f"{value} {unit}s"
+
+
+def _format_photo_age_label(photo_date: datetime.date | None) -> str:
+    """Format a human-friendly age label for overlay text."""
+    if not photo_date:
+        return ""
+
+    today = datetime.date.today()
+    if photo_date > today:
+        return "Future photo"
+
+    is_same_month_day = photo_date.month == today.month and photo_date.day == today.day
+
+    if is_same_month_day:
+        years = today.year - photo_date.year
+        if years <= 0:
+            return "Today"
+        return f"Today, {_pluralize(years, 'year')} ago"
+
+    total_months = (today.year - photo_date.year) * 12 + (
+        today.month - photo_date.month
+    )
+    if today.day < photo_date.day:
+        total_months -= 1
+    total_months = max(total_months, 0)
+
+    years, months = divmod(total_months, 12)
+
+    if years == 0 and months == 0:
+        return "Less than 1 month ago"
+
+    if years == 0:
+        return f"{_pluralize(months, 'month')} ago"
+
+    if months == 0:
+        return f"{_pluralize(years, 'year')} ago"
+
+    # Keep month-first wording to match requested style.
+    return f"{_pluralize(months, 'month')} and {_pluralize(years, 'year')} ago"
+
+
+def _is_path_under_root(path: str, root: str | None) -> bool:
+    """Return True when `path` is inside `root` after resolution."""
+    if not path or not root:
+        return False
+
+    try:
+        resolved_path = Path(path).resolve()
+        resolved_root = Path(root).resolve()
+    except OSError:
+        return False
+
+    return resolved_root == resolved_path or resolved_root in resolved_path.parents
+
+
+def _prepare_random_photo_payload(path: str) -> dict[str, str]:
+    """Prepare random photo metadata and ensure cached image exists."""
+    photo_date = get_photo_date(path)
+    age_label = _format_photo_age_label(photo_date)
+
+    cache_file = resize_and_compress(
+        path,
+        {
+            "top_left": format_date_with_suffix(photo_date) if photo_date else "",
+            "top_right": "",
+        },
+        50,
+    )
+
+    return {
+        "cache_file": cache_file,
+        "photo_path": path,
+        "age_label": age_label,
+        "photo_date": format_date_with_suffix(photo_date) if photo_date else "",
+    }
 
 
 @G.app.route("/healthcheck")
@@ -132,16 +213,8 @@ def random_image():
         client_ip = request.remote_addr
         user_agent = request.headers.get("User-Agent")
 
-        photo_date = get_photo_date(path)
-
-        cache_file = resize_and_compress(
-            path,
-            {
-                "top_left": format_date_with_suffix(photo_date) if photo_date else "",
-                "top_right": os.path.basename(path),
-            },
-            50,
-        )
+        payload = _prepare_random_photo_payload(path)
+        cache_file = payload["cache_file"]
 
         compressed_size = os.path.getsize(cache_file)
         width, height, mime_type = get_image_metadata(cache_file)
@@ -173,6 +246,59 @@ def random_image():
         G.logger.error("[Routes] Error serving image: %s", e)
         _set_api_status("random", False, str(e))
         return f"Error: {e}", 500
+
+
+@G.app.route("/api/random")
+def api_random_image():
+    """Return JSON metadata for a random photo and where to fetch its image."""
+    try:
+        if G.BUILDING_CACHE:
+            _set_api_status("random", False, "Cache is being built")
+            return jsonify({"error": "Cache is being built"}), 503
+
+        path = pick_file(G.PHOTO_ROOT)
+        if not path:
+            _set_api_status("random", False, "No images found")
+            return jsonify({"error": "No images found"}), 404
+
+        payload = _prepare_random_photo_payload(path)
+        _set_api_status("random", True)
+
+        return jsonify(
+            {
+                "photo_path": payload["photo_path"],
+                "photo_date": payload["photo_date"],
+                "age_label": payload["age_label"],
+                "image_url": f"/random_image?path={quote(path, safe='')}",
+            }
+        )
+    except (OSError, UnidentifiedImageError, ValueError) as e:
+        G.logger.error("[Routes] Error preparing random image metadata: %s", e)
+        _set_api_status("random", False, str(e))
+        return jsonify({"error": "Failed to prepare random image"}), 500
+
+
+@G.app.route("/random_image")
+def random_image_by_path():
+    """Serve a compressed image for a client-supplied photo path."""
+    path = request.args.get("path", "")
+    if not path:
+        return jsonify({"error": "Missing path"}), 400
+
+    if not _is_path_under_root(path, G.PHOTO_ROOT):
+        return jsonify({"error": "Invalid path"}), 400
+
+    if not os.path.exists(path):
+        return jsonify({"error": "Photo not found"}), 404
+
+    try:
+        payload = _prepare_random_photo_payload(path)
+        _set_api_status("random", True)
+        return send_file(payload["cache_file"], mimetype="image/jpeg")
+    except (OSError, UnidentifiedImageError, ValueError) as e:
+        G.logger.error("[Routes] Error serving image for path %s: %s", path, e)
+        _set_api_status("random", False, str(e))
+        return jsonify({"error": "Failed to process photo"}), 500
 
 
 @G.app.route("/clear_cache")
