@@ -208,3 +208,80 @@ def test_prune_cache_skips_when_limit_disabled(tmp_path):
     finally:
         G.CACHE_LIMIT_ENABLED = original_limit_enabled
         G.CACHE_LIMIT = original_limit
+
+
+def test_pick_file_interleaves_non_same_day_when_cycle_hit(tmp_path):
+    """After SAME_DAY_CYCLE same-day picks, a non-same-day photo should be served."""
+    photos = tmp_path / "photos_mix"
+    photos.mkdir(parents=True, exist_ok=True)
+
+    today = cache_manager.datetime.date.today()
+    same_a = photos / f"{today.strftime('%Y%m%d')}_a.jpg"
+    same_b = photos / f"{today.strftime('%Y%m%d')}_b.jpg"
+    other = photos / "20190101_other.jpg"
+    make_image(str(same_a))
+    make_image(str(same_b))
+    make_image(str(other))
+
+    setup_cache_dirs(tmp_path)
+    cache_manager.build_cache(str(photos))
+
+    original_cycle = G.SAME_DAY_CYCLE
+    G.SAME_DAY_CYCLE = 1
+
+    try:
+        with G.app.test_request_context("/"):
+            # First pick should be same-day.
+            first = cache_manager.pick_file(str(photos))
+            assert first is not None
+            assert os.path.basename(first) in {same_a.name, same_b.name}
+
+            # Second pick should be forced from non-same-day pool.
+            second = cache_manager.pick_file(str(photos))
+            assert second is not None
+            assert os.path.basename(second) == other.name
+    finally:
+        G.SAME_DAY_CYCLE = original_cycle
+
+
+def test_pick_file_does_not_loop_same_day_after_exhaustion(tmp_path):
+    """Once same-day list is exhausted, picker should stay on general pool for today."""
+    photos = tmp_path / "photos_exhaust"
+    photos.mkdir(parents=True, exist_ok=True)
+
+    today = cache_manager.datetime.date.today()
+    same_a = photos / f"{today.strftime('%Y%m%d')}_a.jpg"
+    same_b = photos / f"{today.strftime('%Y%m%d')}_b.jpg"
+    other = photos / "20190101_other.jpg"
+    make_image(str(same_a))
+    make_image(str(same_b))
+    make_image(str(other))
+
+    setup_cache_dirs(tmp_path)
+    cache_manager.build_cache(str(photos))
+
+    original_cycle = G.SAME_DAY_CYCLE
+    G.SAME_DAY_CYCLE = 100
+
+    try:
+        with G.app.test_request_context("/"):
+            first = cache_manager.pick_file(str(photos))
+            second = cache_manager.pick_file(str(photos))
+            third = cache_manager.pick_file(str(photos))
+
+            assert first is not None and os.path.basename(first) in {
+                same_a.name,
+                same_b.name,
+            }
+            assert second is not None and os.path.basename(second) in {
+                same_a.name,
+                same_b.name,
+            }
+            assert third is not None and os.path.basename(third) == other.name
+
+            # Simulate an unexpected index reset and verify exhaustion guard still holds.
+            cache_manager.session["photo_index"] = 0
+            fourth = cache_manager.pick_file(str(photos))
+            assert fourth is not None and os.path.basename(fourth) == other.name
+    finally:
+        G.SAME_DAY_CYCLE = original_cycle

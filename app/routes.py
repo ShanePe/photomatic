@@ -219,12 +219,6 @@ def random_image():
         compressed_size = os.path.getsize(cache_file)
         width, height, mime_type = get_image_metadata(cache_file)
 
-        session["photo_served"] = session.get("photo_served", 0) + 1
-
-        if session.get("photo_served", 0) > G.SAME_DAY_CYCLE:
-            session["photo_index"] = 0
-            session["photo_served"] = 0
-
         G.logger.info(
             "[Routes] Served buffer from %s | Compressed size: %.1f KB | Dimensions: %sx%s | MIME: %s | "
             "Client IP: %s | UA: %s | Photo index: %s : Photo served: %s",

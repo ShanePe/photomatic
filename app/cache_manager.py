@@ -20,7 +20,6 @@ from PIL import ExifTags, Image, UnidentifiedImageError
 
 from . import globals as G
 
-
 # --- Metadata utilities ---
 
 
@@ -421,8 +420,11 @@ def pick_file(base_dir):
 
     Behavior:
       - If the cache is stale or missing, rebuild via `build_cache()`.
-      - Serve same-day photos sequentially per-session using `session['photo_index']`.
-      - When same-day list is exhausted, pick a random line from `cache_all.txt`.
+            - Serve same-day photos sequentially per-session using `session['photo_index']`.
+            - Interleave non-same-day photos so same-day entries do not starve the
+                general pool. `G.SAME_DAY_CYCLE` controls max consecutive same-day
+                photos before forcing one random photo from `cache_all.txt`.
+            - When same-day list is exhausted, pick a random line from `cache_all.txt`.
 
     Returns a filesystem path string or `None` if no photos are available.
     """
@@ -437,15 +439,35 @@ def pick_file(base_dir):
     if "photo_date" not in session or session["photo_date"] != str(today):
         session["photo_date"] = str(today)
         session["photo_index"] = 0
+        session["photo_served"] = 0
+        session.pop("same_day_exhausted_date", None)
 
-    idx = session.get("photo_index", 0)
-    path = get_line(same_day_file, idx)
-    if path:
-        session["photo_index"] = idx + 1
-        return path
+    same_day_exhausted = session.get("same_day_exhausted_date") == str(today)
 
     total = count_lines(all_file)
+    path = None
+    idx = session.get("photo_index", 0)
+
+    if not same_day_exhausted:
+        path = get_line(same_day_file, idx)
+        if not path:
+            session["same_day_exhausted_date"] = str(today)
+
+    same_day_streak = session.get("photo_served", 0)
+    max_same_day_streak = max(0, int(G.SAME_DAY_CYCLE))
+
+    should_serve_same_day = bool(path) and (
+        total == 0 or max_same_day_streak <= 0 or same_day_streak < max_same_day_streak
+    )
+
+    if should_serve_same_day:
+        session["photo_index"] = idx + 1
+        session["photo_served"] = same_day_streak + 1
+        return path
+
     if total > 0:
+        # Reset same-day streak whenever we inject a general random photo.
+        session["photo_served"] = 0
         rand_idx = random.randrange(total)
         return get_line(all_file, rand_idx)
 
