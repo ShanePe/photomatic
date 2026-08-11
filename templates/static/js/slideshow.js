@@ -18,19 +18,13 @@ function getCurrentShownImage() {
 
 function positionAgeOverlay(anchorImg) {
   const overlay = document.getElementById('photo-age-overlay');
-  if (!overlay || !anchorImg) return;
+  if (!overlay) return;
 
-  // Use layout box (offset sizes) instead of transformed bounding rect.
-  // This keeps overlay placement stable while slide/zoom transforms animate.
-  const imgWidth = anchorImg.offsetWidth;
-  const imgHeight = anchorImg.offsetHeight;
-  const left = window.innerWidth / 2 - imgWidth / 2;
-  const top = window.innerHeight / 2 - imgHeight / 2;
-  const right = left + imgWidth;
+  // Keep age overlay fixed to the viewport, not tied to image geometry.
   const margin = 16;
 
-  overlay.style.left = `${Math.max(margin, right - overlay.offsetWidth - margin)}px`;
-  overlay.style.top = `${Math.max(margin, top + margin)}px`;
+  overlay.style.left = `${margin}px`;
+  overlay.style.top = `${margin}px`;
 }
 
 function setAgeOverlay(text, anchorImg, visible = false) {

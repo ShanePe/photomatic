@@ -9,14 +9,50 @@ on:
 env:
   CONT: photomatic
 
+permissions:
+  contents: write
+
 jobs:
   build-and-push:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          if [[ ! -f VERSION ]]; then
+            echo "VERSION file missing"
+            exit 1
+          fi
+
+          CURRENT=$(tr -d '[:space:]' < VERSION)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          if [[ -z "$MAJOR" || -z "$MINOR" || -z "$PATCH" ]]; then
+            echo "Invalid semantic version in VERSION: $CURRENT"
+            exit 1
+          fi
+
+          NEXT="$MAJOR.$MINOR.$((PATCH + 1))"
+          echo "$NEXT" > VERSION
+
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Commit bumped version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.version }} [skip ci]"
+          git push
 
       - name: Validate required secrets
         run: |
@@ -37,13 +73,14 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker image
-        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }} .
-
-      - name: Tag Docker image
-        run: docker tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }} ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }}:latest
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }}:${{ steps.bump.outputs.version }} .
+          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }}:${{ steps.bump.outputs.version }} ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }}:latest
 
       - name: Push Docker image
-        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }}:latest
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }}:${{ steps.bump.outputs.version }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }}:latest
 
   redeploy:
     needs: build-and-push
@@ -54,7 +91,7 @@ jobs:
       - name: Trigger Portainer redeploy webhook
         run: |
           HOOK="${{ secrets.PORTAINER_WEBHOOK }}"
-          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }}:latest"
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.CONT }}:${{ needs['build-and-push'].outputs.version }}"
           JSON="{\"image\":\"${IMAGE}\",\"metadata\":{\"ctn_names\":\"${{ env.CONT }}\"}}"
 
           if [[ -z "$HOOK" ]]; then

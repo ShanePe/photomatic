@@ -2,12 +2,15 @@
 
 import json
 import os
+import sys
+from typing import Any
 
 from . import globals as G
 from .cache_manager import prune_cache
+from .version import __version__
 
 
-def redact_sensitive_values(value):
+def redact_sensitive_values(value: Any) -> Any:
     """Recursively redact obvious sensitive keys in nested config values."""
     sensitive_markers = ("key", "token", "secret", "password", "passwd")
 
@@ -44,6 +47,22 @@ def _resolve_port(config_port):
         return config_port
 
 
+def _is_debugger_attached():
+    """Return True when running under a debugger (e.g., debugpy)."""
+    gettrace = getattr(sys, "gettrace", None)
+    if callable(gettrace) and gettrace() is not None:
+        return True
+    return "debugpy" in sys.modules
+
+
+def _resolve_debug_mode(default=False):
+    """Resolve debug mode from APP_DEBUG/FLASK_DEBUG env vars."""
+    raw = os.environ.get("APP_DEBUG", os.environ.get("FLASK_DEBUG"))
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def initialize_app_state():
     """Initialize runtime globals and perform startup housekeeping."""
     paths_cfg = G.CONFIG["paths"]
@@ -70,8 +89,21 @@ def run_app():
     """
     app_cfg = G.CONFIG["app"]
     effective_port = _resolve_port(app_cfg["port"])
+    debug_mode = _resolve_debug_mode(default=False)
+    use_reloader = debug_mode and not _is_debugger_attached()
 
     initialize_app_state()
-    G.logger.info("Effective port: %s", effective_port)
+    G.logger.info(
+        "Effective version: %s | Port: %s | Debug: %s | Reloader: %s",
+        __version__,
+        effective_port,
+        debug_mode,
+        use_reloader,
+    )
 
-    G.app.run(debug=True, host="0.0.0.0", port=effective_port)
+    G.app.run(
+        debug=debug_mode,
+        use_reloader=use_reloader,
+        host="0.0.0.0",
+        port=effective_port,
+    )

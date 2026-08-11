@@ -1,5 +1,7 @@
 """Tests for startup utility behavior."""
 
+# cspell:ignore delenv
+
 import importlib
 import sys
 
@@ -8,21 +10,26 @@ import app.utils as U
 
 class _LoggerStub:
     def __init__(self):
+        """Initialize captured logger call lists for assertions."""
         self.info_calls = []
         self.warning_calls = []
 
     def info(self, msg, *args):
+        """Record info-level log calls."""
         self.info_calls.append((msg, args))
 
     def warning(self, msg, *args):
+        """Record warning-level log calls."""
         self.warning_calls.append((msg, args))
 
 
 class _AppStub:
     def __init__(self):
+        """Initialize collected app.run call arguments."""
         self.run_calls = []
 
     def run(self, **kwargs):
+        """Capture app.run kwargs for assertions."""
         self.run_calls.append(kwargs)
 
 
@@ -65,6 +72,73 @@ def test_run_app_falls_back_to_config_port_on_invalid_env(monkeypatch):
 
     assert app_stub.run_calls[0]["port"] == 5000
     assert logger_stub.warning_calls
+
+
+def test_run_app_disables_reloader_when_debugger_attached(monkeypatch):
+    """Debugger-attached runs should disable Flask reloader to avoid SystemExit."""
+    app_stub = _AppStub()
+    logger_stub = _LoggerStub()
+
+    monkeypatch.setenv("APP_DEBUG", "1")
+    monkeypatch.setattr(
+        U.G, "CONFIG", {"app": {"port": 5000}, "paths": {"photo_dir": "/x"}}
+    )
+    monkeypatch.setattr(U.G, "app", app_stub)
+    monkeypatch.setattr(U.G, "logger", logger_stub)
+    monkeypatch.setattr(U.G, "CACHE_LIMIT_ENABLED", False)
+    monkeypatch.setattr(U.G, "CACHE_COUNT", 0)
+    monkeypatch.setattr(U.G, "CACHE_LIMIT", 10)
+    monkeypatch.setattr(U, "_is_debugger_attached", lambda: True)
+
+    U.run_app()
+
+    assert app_stub.run_calls[0]["debug"] is True
+    assert app_stub.run_calls[0]["use_reloader"] is False
+
+
+def test_run_app_enables_reloader_when_debug_no_debugger(monkeypatch):
+    """Debug runs without debugger should keep reloader enabled."""
+    app_stub = _AppStub()
+    logger_stub = _LoggerStub()
+
+    monkeypatch.setenv("APP_DEBUG", "true")
+    monkeypatch.setattr(
+        U.G, "CONFIG", {"app": {"port": 5000}, "paths": {"photo_dir": "/x"}}
+    )
+    monkeypatch.setattr(U.G, "app", app_stub)
+    monkeypatch.setattr(U.G, "logger", logger_stub)
+    monkeypatch.setattr(U.G, "CACHE_LIMIT_ENABLED", False)
+    monkeypatch.setattr(U.G, "CACHE_COUNT", 0)
+    monkeypatch.setattr(U.G, "CACHE_LIMIT", 10)
+    monkeypatch.setattr(U, "_is_debugger_attached", lambda: False)
+
+    U.run_app()
+
+    assert app_stub.run_calls[0]["debug"] is True
+    assert app_stub.run_calls[0]["use_reloader"] is True
+
+
+def test_run_app_debug_defaults_off(monkeypatch):
+    """Without env toggles, debug mode should default to off."""
+    app_stub = _AppStub()
+    logger_stub = _LoggerStub()
+
+    monkeypatch.delenv("APP_DEBUG", raising=False)
+    monkeypatch.delenv("FLASK_DEBUG", raising=False)
+    monkeypatch.setattr(
+        U.G, "CONFIG", {"app": {"port": 5000}, "paths": {"photo_dir": "/x"}}
+    )
+    monkeypatch.setattr(U.G, "app", app_stub)
+    monkeypatch.setattr(U.G, "logger", logger_stub)
+    monkeypatch.setattr(U.G, "CACHE_LIMIT_ENABLED", False)
+    monkeypatch.setattr(U.G, "CACHE_COUNT", 0)
+    monkeypatch.setattr(U.G, "CACHE_LIMIT", 10)
+    monkeypatch.setattr(U, "_is_debugger_attached", lambda: False)
+
+    U.run_app()
+
+    assert app_stub.run_calls[0]["debug"] is False
+    assert app_stub.run_calls[0]["use_reloader"] is False
 
 
 def test_redact_sensitive_values_masks_known_sensitive_keys():
@@ -115,7 +189,7 @@ def test_wsgi_import_initializes_photo_root(monkeypatch):
     monkeypatch.setattr(U.G.app, "_got_first_request", False)
 
     sys.modules.pop("app.wsgi", None)
-    import app.wsgi as wsgi  # noqa: F401
+    wsgi = importlib.import_module("app.wsgi")
 
     importlib.reload(wsgi)
 

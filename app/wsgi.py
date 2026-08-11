@@ -2,7 +2,8 @@
 
 from . import routes  # pylint: disable=unused-import
 from . import session  # pylint: disable=unused-import
-from .globals import app as application
+from . import globals as G
 from .utils import initialize_app_state
 
 initialize_app_state()
+application = G.app

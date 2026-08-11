@@ -14,11 +14,71 @@ import os
 import random
 import re
 import shutil
+from contextlib import contextmanager
+
+try:
+    import fcntl  # type: ignore
+except ImportError:  # pragma: no cover - not available on Windows
+    fcntl = None
 
 from flask import session
 from PIL import ExifTags, Image, UnidentifiedImageError
 
 from . import globals as G
+
+
+@contextmanager
+def _cache_process_lock(lock_name="cache_manager.lock"):
+    """Cross-process lock for cache index operations.
+
+    Uses `fcntl.flock` when available (Linux containers). On platforms without
+    fcntl (e.g., Windows), this becomes a no-op context manager.
+    """
+    os.makedirs(G.CACHE_DIR, exist_ok=True)
+    lock_path = os.path.join(G.CACHE_DIR, lock_name)
+    lock_file = open(lock_path, "w", encoding="utf-8")
+    try:
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
+
+
+def _count_cached_images_on_disk():
+    """Return the count of cached image files currently on disk."""
+    if not os.path.isdir(G.CACHE_DIR_PHOTO):
+        return 0
+
+    count = 0
+    for fn in os.listdir(G.CACHE_DIR_PHOTO):
+        if fn.startswith(".") or fn.endswith(".json"):
+            continue
+        path = os.path.join(G.CACHE_DIR_PHOTO, fn)
+        if os.path.isfile(path):
+            count += 1
+    return count
+
+
+def _load_same_day_keys_from_cache_file():
+    """Load protected same-day cache keys from cache_same_day.txt on disk."""
+    same_day_file = os.path.join(G.CACHE_DIR, "cache_same_day.txt")
+    keys = set()
+
+    try:
+        with open(same_day_file, "r", encoding="utf-8") as f:
+            for line in f:
+                path = line.strip()
+                if not path:
+                    continue
+                keys.add(hashlib.md5(path.encode()).hexdigest())
+    except FileNotFoundError:
+        return keys
+
+    return keys
+
 
 # --- Metadata utilities ---
 
@@ -184,36 +244,45 @@ def prune_cache():
     if not G.CACHE_LIMIT_ENABLED:
         return
 
-    with G.get_cache_lock():
-        if G.CACHE_COUNT <= G.CACHE_LIMIT:
-            return
+    with _cache_process_lock("cache_prune.lock"):
+        with G.get_cache_lock():
+            current_count = _count_cached_images_on_disk()
+            G.CACHE_COUNT = current_count
 
-        heap = []
-        for fn in os.listdir(G.CACHE_DIR_PHOTO):
-            if fn.startswith(".") or fn.endswith(".json"):
-                continue
-            f = os.path.join(G.CACHE_DIR_PHOTO, fn)
-            if not os.path.isfile(f):
-                continue
-            mtime = os.path.getmtime(f)
-            heapq.heappush(heap, (mtime, f))
+            if current_count <= G.CACHE_LIMIT:
+                return
 
-        while G.CACHE_COUNT > G.CACHE_LIMIT and heap:
-            mtime, f = heapq.heappop(heap)
-            key = os.path.basename(f).replace(".jpg", "")
-            if key in G.SAME_DAY_KEYS:
-                G.logger.info("[CacheManager] Cache retained (same-day): %s", f)
-                continue
-            try:
-                os.remove(f)
-                # Also remove the sidecar metadata file if it exists
-                meta_file = f + ".json"
-                if os.path.exists(meta_file):
-                    os.remove(meta_file)
-                G.CACHE_COUNT -= 1
-                G.logger.info("[CacheManager] Cache pruned: removed %s", f)
-            except OSError:
-                G.logger.warning("[CacheManager] Failed to remove cache file %s", f)
+            protected_keys = _load_same_day_keys_from_cache_file()
+            if not protected_keys and G.SAME_DAY_KEYS:
+                protected_keys = set(G.SAME_DAY_KEYS)
+
+            heap = []
+            for fn in os.listdir(G.CACHE_DIR_PHOTO):
+                if fn.startswith(".") or fn.endswith(".json"):
+                    continue
+                f = os.path.join(G.CACHE_DIR_PHOTO, fn)
+                if not os.path.isfile(f):
+                    continue
+                mtime = os.path.getmtime(f)
+                heapq.heappush(heap, (mtime, f))
+
+            while current_count > G.CACHE_LIMIT and heap:
+                _, f = heapq.heappop(heap)
+                key = os.path.basename(f).replace(".jpg", "")
+                if key in protected_keys:
+                    G.logger.info("[CacheManager] Cache retained (same-day): %s", f)
+                    continue
+                try:
+                    os.remove(f)
+                    # Also remove the sidecar metadata file if it exists
+                    meta_file = f + ".json"
+                    if os.path.exists(meta_file):
+                        os.remove(meta_file)
+                    current_count -= 1
+                    G.CACHE_COUNT = current_count
+                    G.logger.info("[CacheManager] Cache pruned: removed %s", f)
+                except OSError:
+                    G.logger.warning("[CacheManager] Failed to remove cache file %s", f)
 
     # Clean up any orphaned metadata files (runs outside the lock for perf)
     prune_orphaned_metadata()
@@ -377,42 +446,47 @@ def build_cache(base_dir):
     Also populates `G.SAME_DAY_KEYS` with MD5(path) keys to prevent
     `prune_cache()` from deleting those JPEGs.
     """
-    G.CACHE_DATE = None
-    G.BUILDING_CACHE = True
-    G.SAME_DAY_KEYS = set()
+    with _cache_process_lock("cache_build.lock"):
+        G.CACHE_DATE = None
+        G.BUILDING_CACHE = True
+        G.SAME_DAY_KEYS = set()
 
-    try:
-        today = datetime.date.today()
-        extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic")
-        ignore_dirs = {"thumbnails", "cache", ".git", "__pycache__", "@__thumb"}
-        all_path = os.path.join(G.CACHE_DIR, "cache_all.txt")
-        same_day_path = os.path.join(G.CACHE_DIR, "cache_same_day.txt")
+        try:
+            today = datetime.date.today()
+            extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic")
+            ignore_dirs = {"thumbnails", "cache", ".git", "__pycache__", "@__thumb"}
+            all_path = os.path.join(G.CACHE_DIR, "cache_all.txt")
+            same_day_path = os.path.join(G.CACHE_DIR, "cache_same_day.txt")
+            all_tmp_path = all_path + ".tmp"
+            same_day_tmp_path = same_day_path + ".tmp"
 
-        with open(all_path, "w", encoding="utf-8") as f_all, open(
-            same_day_path, "w", encoding="utf-8"
-        ) as f_same:
-            for root, _, files in os.walk(base_dir):
-                if any(ign in root.lower() for ign in ignore_dirs):
-                    continue
+            with open(all_tmp_path, "w", encoding="utf-8") as f_all, open(
+                same_day_tmp_path, "w", encoding="utf-8"
+            ) as f_same:
+                for root, _, files in os.walk(base_dir):
+                    if any(ign in root.lower() for ign in ignore_dirs):
+                        continue
 
-                for fn in files:
-                    if fn.lower().endswith(extensions):
-                        path = os.path.join(root, fn)
-                        photo_date = get_photo_date(path)
-                        if (
-                            photo_date
-                            and photo_date.month == today.month
-                            and photo_date.day == today.day
-                        ):
-                            f_same.write(path + "\n")
-                            key_hash = hashlib.md5(path.encode()).hexdigest()
-                            G.SAME_DAY_KEYS.add(key_hash)
-                        else:
-                            f_all.write(path + "\n")
+                    for fn in files:
+                        if fn.lower().endswith(extensions):
+                            path = os.path.join(root, fn)
+                            photo_date = get_photo_date(path)
+                            if (
+                                photo_date
+                                and photo_date.month == today.month
+                                and photo_date.day == today.day
+                            ):
+                                f_same.write(path + "\n")
+                                key_hash = hashlib.md5(path.encode()).hexdigest()
+                                G.SAME_DAY_KEYS.add(key_hash)
+                            else:
+                                f_all.write(path + "\n")
 
-        G.CACHE_DATE = today
-    finally:
-        G.BUILDING_CACHE = False
+            os.replace(all_tmp_path, all_path)
+            os.replace(same_day_tmp_path, same_day_path)
+            G.CACHE_DATE = today
+        finally:
+            G.BUILDING_CACHE = False
 
 
 def pick_file(base_dir):

@@ -21,6 +21,22 @@ from PIL import UnidentifiedImageError
 
 # Local imports
 from . import globals as G
+from .cache_manager import (
+    clear_entire_cache,
+    format_date_with_suffix,
+    get_image_metadata,
+    get_photo_date,
+    pick_file,
+)
+from .config_manager import load_config
+from .image_utils import get_requests_session, resize_and_compress
+from .weather_utils import (
+    get_cached_weather,
+    map_metno_symbol,
+    map_openmeteo_code,
+    set_cached_weather,
+)
+from .version import __version__
 
 # Healthcheck API call status cache
 _api_call_status = {
@@ -119,6 +135,7 @@ def _prepare_random_photo_payload(path: str) -> dict[str, str]:
 
 @G.app.route("/healthcheck")
 def healthcheck():
+    """Return API health status and cache state."""
     failed = [name for name, status in _api_call_status.items() if not status["ok"]]
     if failed:
         return (
@@ -133,24 +150,7 @@ def healthcheck():
             ),
             500,
         )
-    return jsonify({"status": "ok", "cache": _api_call_status})
-
-
-from .cache_manager import (
-    clear_entire_cache,
-    format_date_with_suffix,
-    get_image_metadata,
-    get_photo_date,
-    pick_file,
-)
-from .image_utils import resize_and_compress, get_requests_session
-from .weather_utils import (
-    map_openmeteo_code,
-    map_metno_symbol,
-    get_cached_weather,
-    set_cached_weather,
-)
-from .config_manager import load_config
+    return jsonify({"status": "ok", "cache": _api_call_status, "version": __version__})
 
 
 @G.app.route("/api/config")
@@ -220,8 +220,11 @@ def random_image():
         width, height, mime_type = get_image_metadata(cache_file)
 
         G.logger.info(
-            "[Routes] Served buffer from %s | Compressed size: %.1f KB | Dimensions: %sx%s | MIME: %s | "
-            "Client IP: %s | UA: %s | Photo index: %s : Photo served: %s",
+            (
+                "[Routes] Served buffer from %s | Compressed size: %.1f KB | "
+                "Dimensions: %sx%s | MIME: %s | Client IP: %s | UA: %s | "
+                "Photo index: %s : Photo served: %s"
+            ),
             os.path.basename(path),
             compressed_size / 1024,
             width,
@@ -420,7 +423,10 @@ def get_weather(lat: str, lon: str):
 
     # Fallback to open-meteo
     try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+        url = (
+            "https://api.open-meteo.com/v1/forecast?"
+            f"latitude={lat}&longitude={lon}&current_weather=true"
+        )
 
         response = session_obj.get(url, timeout=10)
         response.raise_for_status()

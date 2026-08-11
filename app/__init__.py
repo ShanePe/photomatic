@@ -5,8 +5,9 @@ Exports the shared Flask `app` (from `globals`) and a minimal
 """
 
 from .globals import app, ensure_instance_dirs, logger, CONFIG
+from .version import __version__
 
-__all__ = ["app", "create_app", "logger", "CONFIG"]
+__all__ = ["app", "create_app", "logger", "CONFIG", "__version__"]
 
 
 def create_app(instance_path: str | None = None):

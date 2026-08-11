@@ -4,11 +4,12 @@ Covers cache building, pruning, metadata handling, and SAME_DAY_KEYS operations.
 """
 
 import os
+from pathlib import Path
+
 from PIL import Image
 
 from app import cache_manager
 from app import globals as G
-from pathlib import Path
 
 
 def make_image(path, size=(100, 80), color=(10, 20, 30)):
@@ -205,6 +206,48 @@ def test_prune_cache_skips_when_limit_disabled(tmp_path):
         ]
         assert len(remaining_images) == 3
         assert G.CACHE_COUNT == 3
+    finally:
+        G.CACHE_LIMIT_ENABLED = original_limit_enabled
+        G.CACHE_LIMIT = original_limit
+
+
+def test_prune_cache_preserves_same_day_from_index_file(tmp_path):
+    """Pruning should preserve same-day cache entries from cache_same_day.txt."""
+    cache_dir, cache_dir_photo = setup_cache_dirs(tmp_path)
+
+    photos = tmp_path / "photos_protect"
+    photos.mkdir(parents=True, exist_ok=True)
+
+    today = cache_manager.datetime.date.today()
+    same_source = photos / f"{today.strftime('%Y%m%d')}_same.jpg"
+    other_source = photos / "20190101_other.jpg"
+    make_image(str(same_source))
+    make_image(str(other_source))
+
+    same_hash = cache_manager.hashlib.md5(str(same_source).encode()).hexdigest()
+    other_hash = cache_manager.hashlib.md5(str(other_source).encode()).hexdigest()
+
+    same_cached = os.path.join(cache_dir_photo, f"{same_hash}.jpg")
+    other_cached = os.path.join(cache_dir_photo, f"{other_hash}.jpg")
+    make_image(same_cached)
+    make_image(other_cached)
+
+    same_day_file = os.path.join(cache_dir, "cache_same_day.txt")
+    with open(same_day_file, "w", encoding="utf-8") as f:
+        f.write(str(same_source) + "\n")
+
+    original_limit_enabled = G.CACHE_LIMIT_ENABLED
+    original_limit = G.CACHE_LIMIT
+    try:
+        G.CACHE_LIMIT_ENABLED = True
+        G.CACHE_LIMIT = 1
+        G.SAME_DAY_KEYS = set()
+        G.CACHE_COUNT = 0
+
+        cache_manager.prune_cache()
+
+        assert os.path.exists(same_cached)
+        assert not os.path.exists(other_cached)
     finally:
         G.CACHE_LIMIT_ENABLED = original_limit_enabled
         G.CACHE_LIMIT = original_limit
