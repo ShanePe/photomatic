@@ -13,9 +13,9 @@ export function updateDateTime() {
     hour12: true,
   });
   document.getElementById('date').textContent = now.toLocaleDateString([], {
-    weekday: 'long',
+    weekday: 'short',
     year: 'numeric',
-    month: 'long',
+    month: 'short',
     day: 'numeric',
   });
 }

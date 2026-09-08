@@ -59,9 +59,6 @@
   max-width: min(42vw, 460px);
   padding: 10px 14px;
   color: #fff;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 10px;
   font-size: clamp(14px, 1.3vw, 22px);
   line-height: 1.25;
   letter-spacing: 0.02em;
