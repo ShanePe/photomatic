@@ -52,6 +52,8 @@
 
 #photo-age-overlay {
   position: fixed;
+  top: 24px;
+  left: 24px;
   z-index: 5;
   opacity: 0;
   visibility: hidden;
