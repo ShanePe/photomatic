@@ -327,6 +327,7 @@ def clear_cache():
             samesite="None",
             secure=True,
             httponly=True,
+            partitioned=True,
         )
         return response
 

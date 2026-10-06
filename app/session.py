@@ -93,5 +93,6 @@ def persist_photo_state(response, state: dict | None = None):
         samesite="None",
         secure=True,
         httponly=True,
+        partitioned=True,
     )
     return response
