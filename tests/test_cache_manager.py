@@ -3,6 +3,7 @@
 Covers cache building, pruning, metadata handling, and SAME_DAY_KEYS operations.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from PIL import Image
 
 from app import cache_manager
 from app import globals as G
+from app.session import PHOTO_STATE_COOKIE, get_photo_state
 
 
 def make_image(path, size=(100, 80), color=(10, 20, 30)):
@@ -323,8 +325,28 @@ def test_pick_file_does_not_loop_same_day_after_exhaustion(tmp_path):
             assert third is not None and os.path.basename(third) == other.name
 
             # Simulate an unexpected index reset and verify exhaustion guard still holds.
-            cache_manager.session["photo_index"] = 0
-            fourth = cache_manager.pick_file(str(photos))
+            state = {
+                "photo_date": str(today),
+                "photo_index": 0,
+                "photo_served": 0,
+                "same_day_exhausted_date": str(today),
+            }
+            fourth = cache_manager.pick_file(str(photos), state=state)
             assert fourth is not None and os.path.basename(fourth) == other.name
     finally:
         G.SAME_DAY_CYCLE = original_cycle
+
+
+def test_get_photo_state_reads_browser_cookie():
+    """Photo ordering state should come from the browser cookie rather than the server session."""
+    cookie_state = {"photo_date": "2024-01-01", "photo_index": 3, "photo_served": 2}
+    raw_cookie = json.dumps(cookie_state, separators=(",", ":"))
+
+    with G.app.test_request_context(
+        "/", headers={"Cookie": f"{PHOTO_STATE_COOKIE}={raw_cookie}"}
+    ):
+        state = get_photo_state()
+
+    assert state["photo_date"] == "2024-01-01"
+    assert state["photo_index"] == 3
+    assert state["photo_served"] == 2

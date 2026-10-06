@@ -11,11 +11,11 @@ from urllib.parse import quote, urlparse
 # Third-party imports
 from flask import (
     jsonify,
+    make_response,
     render_template,
     request,
     send_file,
     send_from_directory,
-    session,
 )
 from PIL import UnidentifiedImageError
 
@@ -36,6 +36,7 @@ from .weather_utils import (
     map_openmeteo_code,
     set_cached_weather,
 )
+from .session import get_photo_state, persist_photo_state
 from .version import __version__
 
 # Healthcheck API call status cache
@@ -206,6 +207,7 @@ def random_image():
             return "Cache is being built, please try again shortly.", 503
 
         path = pick_file(G.PHOTO_ROOT)
+        state = get_photo_state()
         if not path:
             _set_api_status("random", False, "No images found")
             return "No images found", 404
@@ -232,12 +234,13 @@ def random_image():
             mime_type,
             client_ip,
             user_agent,
-            session.get("photo_index"),
-            session.get("photo_served"),
+            state.get("photo_index"),
+            state.get("photo_served"),
         )
 
         _set_api_status("random", True)
-        return send_file(cache_file, mimetype="image/jpeg")
+        response = send_file(cache_file, mimetype="image/jpeg")
+        return persist_photo_state(response, state)
 
     except (OSError, UnidentifiedImageError, ValueError) as e:
         G.logger.error("[Routes] Error serving image: %s", e)
@@ -254,6 +257,7 @@ def api_random_image():
             return jsonify({"error": "Cache is being built"}), 503
 
         path = pick_file(G.PHOTO_ROOT)
+        state = get_photo_state()
         if not path:
             _set_api_status("random", False, "No images found")
             return jsonify({"error": "No images found"}), 404
@@ -261,14 +265,17 @@ def api_random_image():
         payload = _prepare_random_photo_payload(path)
         _set_api_status("random", True)
 
-        return jsonify(
-            {
-                "photo_path": payload["photo_path"],
-                "photo_date": payload["photo_date"],
-                "age_label": payload["age_label"],
-                "image_url": f"/random_image?path={quote(path, safe='')}",
-            }
+        response = make_response(
+            jsonify(
+                {
+                    "photo_path": payload["photo_path"],
+                    "photo_date": payload["photo_date"],
+                    "age_label": payload["age_label"],
+                    "image_url": f"/random_image?path={quote(path, safe='')}",
+                }
+            )
         )
+        return persist_photo_state(response, state)
     except (OSError, UnidentifiedImageError, ValueError) as e:
         G.logger.error("[Routes] Error preparing random image metadata: %s", e)
         _set_api_status("random", False, str(e))
@@ -311,11 +318,15 @@ def clear_cache():
 
         clear_entire_cache()
 
-        # Optional: reset session counters too
-        session["photo_index"] = 0
-        session["photo_served"] = 0
-
-        return "Cache cleared.", 200
+        response = make_response("Cache cleared.", 200)
+        response.set_cookie(
+            "photomatic_photo_state",
+            "",
+            expires=0,
+            samesite="Lax",
+            httponly=True,
+        )
+        return response
 
     except Exception as e:  # pylint: disable=broad-except
         G.logger.error("[Routes] Error clearing cache: %s", e)

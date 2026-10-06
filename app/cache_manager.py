@@ -21,10 +21,27 @@ try:
 except ImportError:  # pragma: no cover - not available on Windows
     fcntl = None
 
-from flask import session
+from flask import g
 from PIL import ExifTags, Image, UnidentifiedImageError
 
 from . import globals as G
+from .session import get_photo_state
+
+
+def _coerce_non_negative_int(value: object, default: int = 0) -> int:
+    """Normalize a cookie or session value into a non-negative integer."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    if isinstance(value, str):
+        try:
+            return max(0, int(value))
+        except ValueError:
+            return default
+    return default
 
 
 @contextmanager
@@ -39,11 +56,20 @@ def _cache_process_lock(lock_name="cache_manager.lock"):
     lock_file = open(lock_path, "w", encoding="utf-8")
     try:
         if fcntl is not None:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            # `fcntl` is available only on Unix-like systems; typing tools may not
+            # expose flock/LOCK_* on Windows, so guard the runtime access below.
+            flock = getattr(fcntl, "flock", None)
+            lock_ex = getattr(fcntl, "LOCK_EX", None)
+            lock_un = getattr(fcntl, "LOCK_UN", None)
+            if flock is not None and lock_ex is not None:
+                flock(lock_file.fileno(), lock_ex)
         yield
     finally:
         if fcntl is not None:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            flock = getattr(fcntl, "flock", None)
+            lock_un = getattr(fcntl, "LOCK_UN", None)
+            if flock is not None and lock_un is not None:
+                flock(lock_file.fileno(), lock_un)
         lock_file.close()
 
 
@@ -489,19 +515,25 @@ def build_cache(base_dir):
             G.BUILDING_CACHE = False
 
 
-def pick_file(base_dir):
-    """Select the next photo path for the current session.
+def pick_file(base_dir, state=None):
+    """Select the next photo path for the current browser.
 
     Behavior:
       - If the cache is stale or missing, rebuild via `build_cache()`.
-            - Serve same-day photos sequentially per-session using `session['photo_index']`.
-            - Interleave non-same-day photos so same-day entries do not starve the
-                general pool. `G.SAME_DAY_CYCLE` controls max consecutive same-day
-                photos before forcing one random photo from `cache_all.txt`.
-            - When same-day list is exhausted, pick a random line from `cache_all.txt`.
+      - Serve same-day photos sequentially for the current browser first.
+      - Interleave non-same-day photos so same-day entries do not starve the
+        general pool. `G.SAME_DAY_CYCLE` controls how many same-day photos appear
+        before a random general photo is injected.
+      - When the same-day list is exhausted, keep selecting from `cache_all.txt`.
 
     Returns a filesystem path string or `None` if no photos are available.
     """
+    if state is None:
+        state = getattr(g, "photo_state", None)
+        if state is None:
+            state = get_photo_state()
+            g.photo_state = state
+
     today = datetime.date.today()
     all_file = os.path.join(G.CACHE_DIR, "cache_all.txt")
     same_day_file = os.path.join(G.CACHE_DIR, "cache_same_day.txt")
@@ -509,25 +541,24 @@ def pick_file(base_dir):
     if G.CACHE_DATE != today or not os.path.exists(all_file):
         build_cache(base_dir)
 
-    # Serve next same-day photo for this session
-    if "photo_date" not in session or session["photo_date"] != str(today):
-        session["photo_date"] = str(today)
-        session["photo_index"] = 0
-        session["photo_served"] = 0
-        session.pop("same_day_exhausted_date", None)
+    if state.get("photo_date") != str(today):
+        state["photo_date"] = str(today)
+        state["photo_index"] = 0
+        state["photo_served"] = 0
+        state.pop("same_day_exhausted_date", None)
 
-    same_day_exhausted = session.get("same_day_exhausted_date") == str(today)
+    same_day_exhausted = state.get("same_day_exhausted_date") == str(today)
 
     total = count_lines(all_file)
     path = None
-    idx = session.get("photo_index", 0)
+    idx = _coerce_non_negative_int(state.get("photo_index", 0))
 
     if not same_day_exhausted:
         path = get_line(same_day_file, idx)
         if not path:
-            session["same_day_exhausted_date"] = str(today)
+            state["same_day_exhausted_date"] = str(today)
 
-    same_day_streak = session.get("photo_served", 0)
+    same_day_streak = _coerce_non_negative_int(state.get("photo_served", 0))
     max_same_day_streak = max(0, int(G.SAME_DAY_CYCLE))
 
     should_serve_same_day = bool(path) and (
@@ -535,13 +566,12 @@ def pick_file(base_dir):
     )
 
     if should_serve_same_day:
-        session["photo_index"] = idx + 1
-        session["photo_served"] = same_day_streak + 1
+        state["photo_index"] = idx + 1
+        state["photo_served"] = same_day_streak + 1
         return path
 
     if total > 0:
-        # Reset same-day streak whenever we inject a general random photo.
-        session["photo_served"] = 0
+        state["photo_served"] = 0
         rand_idx = random.randrange(total)
         return get_line(all_file, rand_idx)
 
