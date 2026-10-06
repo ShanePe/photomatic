@@ -323,7 +323,9 @@ def clear_cache():
             "photomatic_photo_state",
             "",
             expires=0,
-            samesite="Lax",
+            path="/",
+            samesite="None",
+            secure=True,
             httponly=True,
         )
         return response

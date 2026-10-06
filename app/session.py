@@ -89,7 +89,9 @@ def persist_photo_state(response, state: dict | None = None):
         PHOTO_STATE_COOKIE,
         cookie_value,
         max_age=60 * 60 * 24 * 365,
-        samesite="Lax",
+        path="/",
+        samesite="None",
+        secure=True,
         httponly=True,
     )
     return response
