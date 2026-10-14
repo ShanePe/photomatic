@@ -151,6 +151,20 @@ def test_resize_and_compress_cache_hit(tmp_path):
     assert mtime1 == mtime2  # File wasn't recreated
 
 
+def test_apply_round_corners_creates_rounded_edges():
+    """Test that round-corner mask is applied without changing image size."""
+    img = Image.new("RGBA", (200, 120), (255, 0, 0, 255))
+
+    rounded = image_utils.apply_round_corners(img, radius=20)
+
+    assert rounded.size == img.size
+    assert rounded.mode == "RGBA"
+
+    # Check a corner pixel is transparent to confirm the corner was clipped.
+    assert rounded.getpixel((0, 0))[3] == 0
+    assert rounded.getpixel((100, 60))[3] == 255
+
+
 def test_apply_overlays_all_corners():
     """Test that overlays can be applied to all four corners."""
     img = Image.new("RGB", (800, 600), (100, 100, 100))

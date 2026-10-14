@@ -114,6 +114,20 @@ def apply_overlays(img, overlays: dict[str, str]):
         draw_text(draw, font, text, x, y)
 
 
+def apply_round_corners(img: Image.Image, radius: int = 12) -> Image.Image:
+    """Return a copy of the image with rounded corners, preserving size."""
+    if radius <= 0:
+        return img.copy()
+
+    rgba = img.convert("RGBA")
+    mask = Image.new("L", rgba.size, 0)
+    draw = ImageDraw.Draw(mask)
+    draw.rounded_rectangle((0, 0, rgba.width - 1, rgba.height - 1), radius, fill=255)
+
+    result = Image.new("RGBA", rgba.size, (0, 0, 0, 0))
+    return Image.composite(rgba, result, mask)
+
+
 def resize_and_compress(
     path: str,
     overlays: dict[str, str] | None = None,
@@ -178,8 +192,13 @@ def resize_and_compress(
             if overlays:
                 apply_overlays(work_img, overlays)
 
+            # Rounded corners are applied to the cached output so the browser
+            # can keep the original slideshow sizing while the saved image itself
+            # carries the soft edge treatment.
+            rounded_img = apply_round_corners(work_img)
+
             # Save to cache - convert creates a new image
-            rgb_img = work_img.convert("RGB")
+            rgb_img = rounded_img.convert("RGB")
             rgb_img.save(
                 cache_file,
                 format="JPEG",

@@ -53,6 +53,29 @@ def test_run_app_uses_port_env_override(monkeypatch):
     assert app_stub.run_calls[0]["port"] == 8081
 
 
+def test_run_app_uses_cli_port_and_photo_overrides(monkeypatch):
+    """CLI arguments should override the config defaults for photo root and port."""
+    app_stub = _AppStub()
+    logger_stub = _LoggerStub()
+
+    monkeypatch.setattr(
+        U.sys, "argv", ["app", "--port", "5050", "--photos", "/tmp/photos"]
+    )
+    monkeypatch.setattr(
+        U.G, "CONFIG", {"app": {"port": 5000}, "paths": {"photo_dir": "/x"}}
+    )
+    monkeypatch.setattr(U.G, "app", app_stub)
+    monkeypatch.setattr(U.G, "logger", logger_stub)
+    monkeypatch.setattr(U.G, "CACHE_LIMIT_ENABLED", False)
+    monkeypatch.setattr(U.G, "CACHE_COUNT", 0)
+    monkeypatch.setattr(U.G, "CACHE_LIMIT", 10)
+
+    U.run_app()
+
+    assert U.G.PHOTO_ROOT == "/tmp/photos"
+    assert app_stub.run_calls[0]["port"] == 5050
+
+
 def test_run_app_falls_back_to_config_port_on_invalid_env(monkeypatch):
     """Invalid PORT env var should log warning and use config port."""
     app_stub = _AppStub()

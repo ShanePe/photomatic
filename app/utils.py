@@ -1,5 +1,6 @@
 """Utility functions for application startup."""
 
+import argparse
 import json
 import os
 import sys
@@ -30,8 +31,11 @@ def redact_sensitive_values(value: Any) -> Any:
     return value
 
 
-def _resolve_port(config_port):
-    """Resolve effective port using PORT env var first, then config value."""
+def _resolve_port(config_port, cli_port=None):
+    """Resolve the effective port with CLI > env > config precedence."""
+    if cli_port is not None:
+        return cli_port
+
     env_port = os.environ.get("PORT")
     if not env_port:
         return config_port
@@ -45,6 +49,16 @@ def _resolve_port(config_port):
             config_port,
         )
         return config_port
+
+
+def parse_runtime_args(argv=None):
+    """Parse process-level startup overrides for the Flask app."""
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--photos", default=None)
+    parser.add_argument("--debug", action="store_true")
+    args, _ = parser.parse_known_args(argv)
+    return {"port": args.port, "photos": args.photos, "debug": args.debug}
 
 
 def _is_debugger_attached():
@@ -80,15 +94,21 @@ def initialize_app_state():
         prune_cache()
 
 
-def run_app():
+def run_app(argv=None):
     """Configure globals and run the Flask application.
 
     Uses values from `config.yaml` (`paths.photo_dir`, `app.port`), prunes the
     cache if the on-disk cache exceeds the configured limit, and launches
     the Flask app.
     """
+    cli_args = parse_runtime_args(argv)
     app_cfg = G.CONFIG["app"]
-    effective_port = _resolve_port(app_cfg["port"])
+    if cli_args["photos"]:
+        G.CONFIG.setdefault("paths", {})["photo_dir"] = cli_args["photos"]
+    if cli_args["port"] is not None:
+        app_cfg["port"] = cli_args["port"]
+
+    effective_port = _resolve_port(app_cfg["port"], cli_port=cli_args["port"])
     debug_mode = _resolve_debug_mode(default=False)
     use_reloader = debug_mode and not _is_debugger_attached()
 

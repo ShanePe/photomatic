@@ -4,6 +4,5 @@ from . import routes  # pylint: disable=unused-import
 from . import session  # pylint: disable=unused-import
 from .utils import run_app
 
-
 if __name__ == "__main__":
-    run_app()
+    run_app(__import__("sys").argv[1:])

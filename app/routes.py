@@ -134,6 +134,14 @@ def _prepare_random_photo_payload(path: str) -> dict[str, str]:
     }
 
 
+@G.app.before_request
+def log_request():
+    """Log each incoming HTTP request so cache rebuild activity is visible."""
+    G.logger.info(
+        "HTTP %s %s from %s", request.method, request.path, request.remote_addr
+    )
+
+
 @G.app.route("/healthcheck")
 def healthcheck():
     """Return API health status and cache state."""
@@ -204,7 +212,7 @@ def random_image():
     try:
         if G.BUILDING_CACHE:
             _set_api_status("random", False, "Cache is being built")
-            return "Cache is being built, please try again shortly.", 503
+            return "Cache is being built, please try again shortly.", 500
 
         path = pick_file(G.PHOTO_ROOT)
         state = get_photo_state()
@@ -254,7 +262,7 @@ def api_random_image():
     try:
         if G.BUILDING_CACHE:
             _set_api_status("random", False, "Cache is being built")
-            return jsonify({"error": "Cache is being built"}), 503
+            return jsonify({"error": "Cache is being built"}), 500
 
         path = pick_file(G.PHOTO_ROOT)
         state = get_photo_state()
@@ -285,6 +293,10 @@ def api_random_image():
 @G.app.route("/random_image")
 def random_image_by_path():
     """Serve a compressed image for a client-supplied photo path."""
+    if G.BUILDING_CACHE:
+        _set_api_status("random", False, "Cache is being built")
+        return jsonify({"error": "Cache is being built"}), 500
+
     path = request.args.get("path", "")
     if not path:
         return jsonify({"error": "Missing path"}), 400

@@ -99,3 +99,45 @@ def test_random_image_by_path_rejects_invalid_path(tmp_path):
     resp = client.get(f"/random_image?path={outside}")
 
     assert resp.status_code == 400
+
+
+def test_clear_cache_logs_request(monkeypatch):
+    """Every incoming request should log the HTTP method and path for visibility."""
+    messages = []
+
+    def fake_info(message, *args):
+        if args:
+            messages.append(message % args)
+        else:
+            messages.append(message)
+
+    monkeypatch.setattr(G.logger, "info", fake_info)
+
+    client = G.app.test_client()
+    resp = client.get("/clear_cache")
+
+    assert resp.status_code in (200, 503)
+    assert any("GET /clear_cache" in message for message in messages)
+
+
+def test_random_image_routes_fail_during_cache_build(tmp_path):
+    """Any random-image fetch should fail fast while the cache is being rebuilt."""
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    valid_photo = photos / "photo.jpg"
+    Image.new("RGB", (20, 20), (30, 40, 50)).save(valid_photo, format="JPEG")
+
+    G.PHOTO_ROOT = str(photos)
+    G.BUILDING_CACHE = True
+
+    client = G.app.test_client()
+
+    random_resp = client.get("/random")
+    image_resp = client.get(f"/random_image?path={valid_photo}")
+    api_resp = client.get("/api/random")
+
+    assert random_resp.status_code == 500
+    assert image_resp.status_code == 500
+    assert api_resp.status_code == 500
+
+    G.BUILDING_CACHE = False
