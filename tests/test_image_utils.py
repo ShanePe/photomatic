@@ -58,7 +58,9 @@ def test_resize_and_compress_creates_cache(tmp_path):
     assert data[:2] == b"\xff\xd8"
 
     # cache file should exist
-    key_hash = __import__("hashlib").md5(str(img_path).encode()).hexdigest()
+    key_hash = image_utils._build_cache_key(
+        str(img_path), {"top_left": "Test Overlay"}, 80
+    )
     cache_file = os.path.join(G.CACHE_DIR_PHOTO, f"{key_hash}.jpg")
     assert os.path.exists(cache_file)
     assert cache_file_path == cache_file
@@ -149,6 +151,23 @@ def test_resize_and_compress_cache_hit(tmp_path):
 
     assert cache_file1 == cache_file2
     assert mtime1 == mtime2  # File wasn't recreated
+
+
+def test_resize_and_compress_uses_processing_specific_cache_key(tmp_path):
+    """Changing processing inputs should not reuse stale cache files."""
+    photos = tmp_path / "photos_cache_key"
+    photos.mkdir()
+    img_path = photos / "cache_key_test.jpg"
+    make_image(str(img_path), size=(400, 300))
+
+    setup_cache_dirs(tmp_path)
+
+    cache_file1 = image_utils.resize_and_compress(str(img_path), {"top_left": "v1"}, 80)
+    cache_file2 = image_utils.resize_and_compress(str(img_path), {"top_left": "v2"}, 80)
+
+    assert cache_file1 != cache_file2
+    assert os.path.exists(cache_file1)
+    assert os.path.exists(cache_file2)
 
 
 def test_apply_round_corners_creates_rounded_edges():

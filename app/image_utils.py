@@ -44,6 +44,19 @@ FONT_PATH = os.path.join(
 # LRU-style: keep only a few common sizes (keyed by font_size)
 _FONT_CACHE: dict[int, ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
 _MAX_FONT_CACHE = 10  # Typically only 1-2 sizes used
+_CACHE_KEY_VERSION = "rounded-corners-v2"
+
+
+def _build_cache_key(path: str, overlays: dict[str, str] | None, quality: int) -> str:
+    """Return a stable cache filename key for a specific processing recipe."""
+    overlay_signature = "|".join(
+        f"{key}={value}" for key, value in sorted((overlays or {}).items())
+    )
+    key_material = (
+        f"{path}|quality={quality}|overlays={overlay_signature}|"
+        f"version={_CACHE_KEY_VERSION}"
+    )
+    return hashlib.md5(key_material.encode()).hexdigest()
 
 
 def draw_text(draw, font, text, x, y):
@@ -141,7 +154,7 @@ def resize_and_compress(
     start_time = time.perf_counter()
     overlays = overlays or {}
 
-    key_hash = hashlib.md5(path.encode()).hexdigest()
+    key_hash = _build_cache_key(path, overlays, quality)
     cache_file = os.path.join(G.CACHE_DIR_PHOTO, f"{key_hash}.jpg")
 
     # --- Cache check ---
