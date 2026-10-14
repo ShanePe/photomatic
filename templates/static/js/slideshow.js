@@ -16,6 +16,20 @@ function getCurrentShownImage() {
     : document.getElementById('slideshow-next');
 }
 
+function applyImageFit(img) {
+  if (!img || !img.naturalWidth || !img.naturalHeight) {
+    return;
+  }
+
+  const isPortrait = img.naturalHeight > img.naturalWidth;
+
+  img.style.width = isPortrait ? 'auto' : '100vw';
+  img.style.height = isPortrait ? '100vh' : 'auto';
+  img.style.maxWidth = '100vw';
+  img.style.maxHeight = '100vh';
+  img.style.objectFit = 'contain';
+}
+
 function positionAgeOverlay(anchorImg) {
   const overlay = document.getElementById('photo-age-overlay');
   if (!overlay) return;
@@ -131,6 +145,7 @@ export async function loadImage(transitions, kenBurns, photoSwitchMs) {
       current.src = payload.image_url;
       current.className = 'slideshow-img';
       current.style.display = 'block';
+      applyImageFit(current);
       setAgeOverlay(payload.age_label, null, false);
 
       await nextAnimationFrame();
@@ -158,6 +173,7 @@ export async function loadImage(transitions, kenBurns, photoSwitchMs) {
     next.src = payload.image_url;
     next.className = `slideshow-img ${randomTransition}`;
     next.style.display = 'block';
+    applyImageFit(next);
 
     if (hasCurrentPhoto) {
       // Fade out the current photo and its current age label first.
