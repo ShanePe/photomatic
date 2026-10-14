@@ -3,6 +3,7 @@
 Covers image resizing, compression, font caching, and overlay functionality.
 """
 
+import json
 import os
 from PIL import Image
 
@@ -122,8 +123,6 @@ def test_resize_and_compress_creates_metadata(tmp_path):
     assert os.path.exists(meta_file)
 
     # Verify metadata content
-    import json
-
     with open(meta_file, "r", encoding="utf-8") as f:
         meta = json.load(f)
     assert "width" in meta
@@ -188,8 +187,6 @@ def test_resize_and_compress_uses_png_for_rounded_corners(tmp_path):
     with Image.open(cache_file) as img:
         assert img.mode in {"RGBA", "LA", "P"}
 
-    import json
-
     with open(cache_file + ".json", "r", encoding="utf-8") as f:
         meta = json.load(f)
 
@@ -206,8 +203,12 @@ def test_apply_round_corners_creates_rounded_edges():
     assert rounded.mode == "RGBA"
 
     # Check a corner pixel is transparent to confirm the corner was clipped.
-    assert rounded.getpixel((0, 0))[3] == 0
-    assert rounded.getpixel((100, 60))[3] == 255
+    corner_pixel = rounded.getpixel((0, 0))
+    center_pixel = rounded.getpixel((100, 60))
+    assert isinstance(corner_pixel, tuple)
+    assert isinstance(center_pixel, tuple)
+    assert corner_pixel[3] == 0
+    assert center_pixel[3] == 255
 
 
 def test_apply_overlays_all_corners():
