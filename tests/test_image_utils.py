@@ -34,7 +34,7 @@ def setup_cache_dirs(tmp_path):
 
 
 def test_resize_and_compress_creates_cache(tmp_path):
-    """Test that resize_and_compress creates a cached JPEG file."""
+    """Test that resize_and_compress creates a cached PNG file."""
     photos = tmp_path / "photos"
     photos.mkdir()
     img_path = photos / "test.jpg"
@@ -51,17 +51,16 @@ def test_resize_and_compress_creates_cache(tmp_path):
         str(img_path), {"top_left": "Test Overlay"}, 80
     )
 
-    # Read the cached file and verify it's a valid JPEG
+    # Read the cached file and verify it's a valid PNG
     with open(cache_file_path, "rb") as f:
         data = f.read()
-    # JPEG files start with 0xFF 0xD8
-    assert data[:2] == b"\xff\xd8"
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
 
     # cache file should exist
     key_hash = image_utils._build_cache_key(
         str(img_path), {"top_left": "Test Overlay"}, 80
     )
-    cache_file = os.path.join(G.CACHE_DIR_PHOTO, f"{key_hash}.jpg")
+    cache_file = os.path.join(G.CACHE_DIR_PHOTO, f"{key_hash}.png")
     assert os.path.exists(cache_file)
     assert cache_file_path == cache_file
 
@@ -129,7 +128,7 @@ def test_resize_and_compress_creates_metadata(tmp_path):
         meta = json.load(f)
     assert "width" in meta
     assert "height" in meta
-    assert meta["mime_type"] == "image/jpeg"
+    assert meta["mime_type"] == "image/png"
 
 
 def test_resize_and_compress_cache_hit(tmp_path):
@@ -168,6 +167,33 @@ def test_resize_and_compress_uses_processing_specific_cache_key(tmp_path):
     assert cache_file1 != cache_file2
     assert os.path.exists(cache_file1)
     assert os.path.exists(cache_file2)
+
+
+def test_resize_and_compress_uses_png_for_rounded_corners(tmp_path):
+    """Rounded-corner output should preserve alpha in a PNG cache."""
+    photos = tmp_path / "photos_png"
+    photos.mkdir()
+    img_path = photos / "rounded_test.jpg"
+    make_image(str(img_path), size=(400, 300))
+
+    setup_cache_dirs(tmp_path)
+
+    cache_file = image_utils.resize_and_compress(
+        str(img_path), {"top_left": "Rounded PNG"}, 80
+    )
+
+    assert cache_file.endswith(".png")
+    assert os.path.exists(cache_file)
+
+    with Image.open(cache_file) as img:
+        assert img.mode in {"RGBA", "LA", "P"}
+
+    import json
+
+    with open(cache_file + ".json", "r", encoding="utf-8") as f:
+        meta = json.load(f)
+
+    assert meta["mime_type"] == "image/png"
 
 
 def test_apply_round_corners_creates_rounded_edges():

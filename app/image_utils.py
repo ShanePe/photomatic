@@ -44,7 +44,7 @@ FONT_PATH = os.path.join(
 # LRU-style: keep only a few common sizes (keyed by font_size)
 _FONT_CACHE: dict[int, ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
 _MAX_FONT_CACHE = 10  # Typically only 1-2 sizes used
-_CACHE_KEY_VERSION = "rounded-corners-v2"
+_CACHE_KEY_VERSION = "rounded-corners-png-v1"
 
 
 def _build_cache_key(path: str, overlays: dict[str, str] | None, quality: int) -> str:
@@ -53,7 +53,7 @@ def _build_cache_key(path: str, overlays: dict[str, str] | None, quality: int) -
         f"{key}={value}" for key, value in sorted((overlays or {}).items())
     )
     key_material = (
-        f"{path}|quality={quality}|overlays={overlay_signature}|"
+        f"{path}|quality={quality}|format=png|overlays={overlay_signature}|"
         f"version={_CACHE_KEY_VERSION}"
     )
     return hashlib.md5(key_material.encode()).hexdigest()
@@ -148,14 +148,14 @@ def resize_and_compress(
 ) -> str:
     """
     Resize/compress image with optional overlay text, using local cache.
-    Returns the path to the cached JPEG file.
+    Returns the path to the cached PNG file.
     Ensures proper resource cleanup even on exceptions.
     """
     start_time = time.perf_counter()
     overlays = overlays or {}
 
     key_hash = _build_cache_key(path, overlays, quality)
-    cache_file = os.path.join(G.CACHE_DIR_PHOTO, f"{key_hash}.jpg")
+    cache_file = os.path.join(G.CACHE_DIR_PHOTO, f"{key_hash}.png")
 
     # --- Cache check ---
     if os.path.exists(cache_file):
@@ -167,7 +167,7 @@ def resize_and_compress(
         return cache_file
 
     original_size = os.path.getsize(path)
-    rgb_img = None
+    png_img = None
     transposed_img = None
     transposed_is_copy = False
     original_width, original_height = 0, 0
@@ -210,26 +210,25 @@ def resize_and_compress(
             # carries the soft edge treatment.
             rounded_img = apply_round_corners(work_img)
 
-            # Save to cache - convert creates a new image
-            rgb_img = rounded_img.convert("RGB")
-            rgb_img.save(
+            # Preserve alpha so the rounded corners remain transparent and the
+            # browser can retain the correct aspect/fit without matte pixels.
+            png_img = rounded_img.convert("RGBA")
+            png_img.save(
                 cache_file,
-                format="JPEG",
-                quality=quality,
+                format="PNG",
                 optimize=True,
-                progressive=True,
             )
 
             # Write metadata file (use final dimensions after thumbnail)
-            final_width, final_height = rgb_img.size
-            write_image_metadata(cache_file, final_width, final_height, "image/jpeg")
+            final_width, final_height = png_img.size
+            write_image_metadata(cache_file, final_width, final_height, "image/png")
 
             with G.get_cache_lock():
                 G.CACHE_COUNT += 1
 
             # Close intermediate images inside the with block while we have valid references
-            rgb_img.close()
-            rgb_img = None
+            png_img.close()
+            png_img = None
             if transposed_is_copy and transposed_img is not None:
                 transposed_img.close()
                 transposed_img = None
@@ -241,7 +240,7 @@ def resize_and_compress(
         )
 
         G.logger.info(
-            "[ImageProcessor] Completed %s | %dx%d (%s) -> %dx%d (JPEG) | "
+            "[ImageProcessor] Completed %s | %dx%d (%s) -> %dx%d (PNG) | "
             "%.1f KB -> %.1f KB (%.1f%% reduction) | "
             "Resized: %s | Transposed: %s | Overlays: %d | "
             "Quality: %d | Time: %.1f ms | Cache: %d items",
@@ -276,9 +275,9 @@ def resize_and_compress(
         raise e
     finally:
         # Cleanup in case of exception - close any remaining open images
-        if rgb_img is not None:
+        if png_img is not None:
             try:
-                rgb_img.close()
+                png_img.close()
             except Exception:  # pylint: disable=broad-except
                 pass
         if transposed_is_copy and transposed_img is not None:

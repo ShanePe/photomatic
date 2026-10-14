@@ -192,7 +192,7 @@ def index():
     Returns:
         str: Rendered HTML content of the index.html template.
     """
-    return render_template("index.html")
+    return render_template("index.html", app_version=__version__)
 
 
 @G.app.route("/random")
@@ -247,7 +247,7 @@ def random_image():
         )
 
         _set_api_status("random", True)
-        response = send_file(cache_file, mimetype="image/jpeg")
+        response = send_file(cache_file, mimetype=mime_type)
         return persist_photo_state(response, state)
 
     except (OSError, UnidentifiedImageError, ValueError) as e:
@@ -310,7 +310,9 @@ def random_image_by_path():
     try:
         payload = _prepare_random_photo_payload(path)
         _set_api_status("random", True)
-        return send_file(payload["cache_file"], mimetype="image/jpeg")
+        cache_file = payload["cache_file"]
+        _, _, mime_type = get_image_metadata(cache_file)
+        return send_file(cache_file, mimetype=mime_type)
     except (OSError, UnidentifiedImageError, ValueError) as e:
         G.logger.error("[Routes] Error serving image for path %s: %s", path, e)
         _set_api_status("random", False, str(e))
