@@ -58,9 +58,11 @@ def test_resize_and_compress_creates_cache(tmp_path):
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
 
     # cache file should exist
+    # pylint: disable=protected-access
     key_hash = image_utils._build_cache_key(
         str(img_path), {"top_left": "Test Overlay"}, 80
     )
+    # pylint: enable=protected-access
     cache_file = os.path.join(G.CACHE_DIR_PHOTO, f"{key_hash}.png")
     assert os.path.exists(cache_file)
     assert cache_file_path == cache_file
