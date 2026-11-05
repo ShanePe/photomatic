@@ -85,14 +85,15 @@ def encode_photo_state(state: dict | None) -> str:
 def persist_photo_state(response, state: dict | None = None):
     """Persist the browser-scoped slideshow state on the current response."""
     cookie_value = encode_photo_state(state or get_photo_state())
+    secure = request.is_secure
     response.set_cookie(
         PHOTO_STATE_COOKIE,
         cookie_value,
         max_age=60 * 60 * 24 * 365,
         path="/",
-        samesite="None",
-        secure=True,
+        samesite="None" if secure else "Lax",
+        secure=secure,
         httponly=True,
-        partitioned=True,
+        partitioned=secure,
     )
     return response
