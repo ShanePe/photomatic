@@ -3,7 +3,6 @@
 Covers cache building, pruning, metadata handling, and SAME_DAY_KEYS operations.
 """
 
-import json
 import os
 from pathlib import Path
 
@@ -11,7 +10,6 @@ from PIL import Image
 
 from app import cache_manager
 from app import globals as G
-from app.session import PHOTO_STATE_COOKIE, get_photo_state, persist_photo_state
 
 
 def make_image(path, size=(100, 80), color=(10, 20, 30)):
@@ -335,34 +333,3 @@ def test_pick_file_does_not_loop_same_day_after_exhaustion(tmp_path):
             assert fourth is not None and os.path.basename(fourth) == other.name
     finally:
         G.SAME_DAY_CYCLE = original_cycle
-
-
-def test_get_photo_state_reads_browser_cookie():
-    """Photo ordering state should come from the browser cookie rather than the server session."""
-    cookie_state = {"photo_date": "2024-01-01", "photo_index": 3, "photo_served": 2}
-    raw_cookie = json.dumps(cookie_state, separators=(",", ":"))
-
-    with G.app.test_request_context(
-        "/", headers={"Cookie": f"{PHOTO_STATE_COOKIE}={raw_cookie}"}
-    ):
-        state = get_photo_state()
-
-    assert state["photo_date"] == "2024-01-01"
-    assert state["photo_index"] == 3
-    assert state["photo_served"] == 2
-
-
-def test_persist_photo_state_cookie_matches_request_scheme():
-    """Photo state cookies should work on HTTP and retain secure flags on HTTPS."""
-    for scheme, secure_attributes in (
-        ("http", False),
-        ("https", True),
-    ):
-        with G.app.test_request_context(f"{scheme}://photomatic.test/"):
-            response = persist_photo_state(G.app.response_class(), {})
-            cookie = response.headers["Set-Cookie"]
-
-            assert ("; Secure" in cookie) is secure_attributes
-            assert ("; SameSite=None" in cookie) is secure_attributes
-            assert ("; SameSite=Lax" in cookie) is not secure_attributes
-            assert ("; Partitioned" in cookie) is secure_attributes

@@ -29,7 +29,7 @@ from .session import get_photo_state
 
 
 def _coerce_non_negative_int(value: object, default: int = 0) -> int:
-    """Normalize a cookie or session value into a non-negative integer."""
+    """Normalize a session value into a non-negative integer."""
     if value is None:
         return default
     if isinstance(value, bool):

@@ -36,7 +36,7 @@ from .weather_utils import (
     map_openmeteo_code,
     set_cached_weather,
 )
-from .session import get_photo_state, persist_photo_state
+from .session import clear_photo_state, get_photo_state, persist_photo_state
 from .version import __version__
 
 # Healthcheck API call status cache
@@ -332,18 +332,8 @@ def clear_cache():
 
         clear_entire_cache()
 
-        response = make_response("Cache cleared.", 200)
-        response.set_cookie(
-            "photomatic_photo_state",
-            "",
-            expires=0,
-            path="/",
-            samesite="None",
-            secure=True,
-            httponly=True,
-            partitioned=True,
-        )
-        return response
+        clear_photo_state()
+        return make_response("Cache cleared.", 200)
 
     except Exception as e:  # pylint: disable=broad-except
         G.logger.error("[Routes] Error clearing cache: %s", e)

@@ -9,6 +9,7 @@ Endpoints
 - `/random` (GET)
   - Returns a single image for the slideshow.
   - Behavior: serves sequential same-day images per browser session; falls back to random selection from the full collection.
+  - Slideshow order is stored in a server-side session per client. The browser receives only an opaque `photomatic_session` identifier cookie; set `SESSION_COOKIE_SECURE=true` when serving over HTTPS.
 
 Responses
 
@@ -34,5 +35,6 @@ curl -I http://localhost:5000/random
 Notes for integrators
 
 - The server uses file-based caches under the Flask `instance` path (see `docs/README.md`).
+- Server-side client sessions are stored under `instance/sessions` and expire after one year.
 - Cached JPEG filenames are deterministic: `md5(original_path).jpg`.
 - Logs include cache hits, compression stats, client IP and user-agent in `instance/log/photomatic.log`.
