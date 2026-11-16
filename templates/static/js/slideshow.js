@@ -4,6 +4,7 @@
 
 let currentImg = 'main'; // 'main' or 'next'
 let preloadPayload = null;
+let isLoading = false;
 const FADE_MS = 2000;
 
 function nextAnimationFrame() {
@@ -111,6 +112,9 @@ async function fetchRandomPayload() {
  * Load a random image from the server and display it with a transition.
  */
 export async function loadImage(transitions, kenBurns, photoSwitchMs) {
+  if (isLoading) return;
+  isLoading = true;
+
   try {
     const imgMain = document.getElementById('slideshow-main');
     const imgNext = document.getElementById('slideshow-next');
@@ -122,6 +126,7 @@ export async function loadImage(transitions, kenBurns, photoSwitchMs) {
 
     // If we already have preloaded metadata, use it, else fetch a new one
     let payload = preloadPayload;
+    preloadPayload = null;
     if (!payload) {
       payload = await fetchRandomPayload();
       if (!payload || !payload.image_url) return;
@@ -130,9 +135,16 @@ export async function loadImage(transitions, kenBurns, photoSwitchMs) {
     // Preload the next image (hidden)
     const preload = new Image();
     preload.src = payload.image_url;
-    await new Promise((resolve) => {
-      if (preload.complete) resolve();
-      else preload.onload = resolve;
+    await new Promise((resolve, reject) => {
+      if (preload.complete) {
+        if (preload.naturalWidth > 0) resolve();
+        else reject(new Error('Failed to preload slideshow image'));
+        return;
+      }
+
+      preload.onload = resolve;
+      preload.onerror = () =>
+        reject(new Error('Failed to preload slideshow image'));
     });
 
     // Set up which is current and which is next
@@ -225,6 +237,8 @@ export async function loadImage(transitions, kenBurns, photoSwitchMs) {
     preloadPayload = await fetchRandomPayload();
   } catch (err) {
     console.warn('Error loading image:', err);
+  } finally {
+    isLoading = false;
   }
 }
 
