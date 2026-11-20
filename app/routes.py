@@ -30,7 +30,7 @@ from .cache_manager import (
 )
 from .config_manager import load_config
 from .image_utils import get_requests_session, resize_and_compress
-from .session import get_photo_state, persist_photo_state
+from .session import clear_photo_state, get_photo_state, persist_photo_state
 from .session_hash_tracker import (
     get_cycle_phase,
     has_same_day_photo_been_served,
