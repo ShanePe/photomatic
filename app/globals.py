@@ -145,10 +145,26 @@ def ensure_instance_dirs(instance_root):
 
 
 # Create cache directories
-os.makedirs(CACHE_DIR, exist_ok=True)
-os.makedirs(CACHE_DIR_PHOTO, exist_ok=True)
-os.makedirs(CACHE_DIR_ICON, exist_ok=True)
-os.makedirs(CACHE_DIR_LOG, exist_ok=True)
+try:
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    os.makedirs(CACHE_DIR_PHOTO, exist_ok=True)
+    os.makedirs(CACHE_DIR_ICON, exist_ok=True)
+    os.makedirs(CACHE_DIR_LOG, exist_ok=True)
+except (OSError, PermissionError) as e:
+    # If we can't create directories (e.g., running in test environment with limited permissions),
+    # attempt to use temp directory instead
+    import tempfile
+    CACHE_DIR = tempfile.gettempdir()
+    CACHE_DIR_PHOTO = os.path.join(CACHE_DIR, "photos")
+    CACHE_DIR_ICON = os.path.join(CACHE_DIR, "icons")
+    CACHE_DIR_LOG = os.path.join(CACHE_DIR, "log")
+    
+    try:
+        os.makedirs(CACHE_DIR_PHOTO, exist_ok=True)
+        os.makedirs(CACHE_DIR_ICON, exist_ok=True)
+        os.makedirs(CACHE_DIR_LOG, exist_ok=True)
+    except (OSError, PermissionError):
+        pass  # If temp directory also fails, let logging handle it
 
 # Configure logging
 log_handler = RotatingFileHandler(
