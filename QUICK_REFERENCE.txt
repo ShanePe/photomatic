@@ -1,0 +1,130 @@
+"""
+QUICK REFERENCE: SESSION-BASED PHOTO TRACKING
+===============================================
+
+WHAT CHANGED:
+=============
+
+1. NEW FILE: app/session_hash_tracker.py
+   ├─ Core session management module
+   ├─ Thread-safe tracking of photo serving
+   ├─ Cycle phase management (same_day ↔ random)
+   ├─ Auto-expiring sessions (24-hour window)
+   └─ MD5 hash-based deduplication
+
+2. MODIFIED: app/session.py
+   ├─ Added session_id to photo state dict
+   ├─ Session ID is UUID, generated per browser
+   ├─ Persists in browser cookie
+   └─ Maintains backward compatibility
+
+3. MODIFIED: app/routes.py
+   ├─ /random endpoint uses cycle-based logic
+   ├─ /api/random endpoint uses cycle-based logic
+   ├─ /clear_cache endpoint resets sessions
+   └─ All endpoints now import session_hash_tracker functions
+
+4. NEW FILE: tests/test_session_hash_tracker.py
+   ├─ Unit tests for session tracking
+   ├─ Tests for phase transitions
+   ├─ Tests for photo counting
+   └─ Tests for session lifecycle
+
+5. DOCUMENTATION:
+   ├─ SESSION_TRACKING_IMPLEMENTATION.md (this directory)
+   ├─ PHOTO_SERVING_CYCLE.txt (this directory)
+   └─ This file
+
+
+HOW TO USE:
+===========
+
+No configuration changes required! The system uses existing config:
+  - cache.same_day_cycle: Number of random photos per cycle (default: 100)
+
+To adjust the cycle ratio, edit config.yaml:
+  cache:
+    same_day_cycle: 100   # Change this number
+
+Result: Show all same-day photos, then 100 random, then repeat
+
+
+QUICK TEST:
+===========
+
+1. Run tests:
+   pytest tests/test_session_hash_tracker.py -v
+
+2. Manual test:
+   - Open browser to http://localhost:80/
+   - Check browser console and server logs
+   - Should see photos cycling through
+   - Refresh page - should continue from same session
+   - Try another tab - should not repeat photos shown in first tab
+
+3. Verify session reset:
+   - Click "Clear Cache" button (if available)
+   - Should reset photo cycle
+   - First photo should repeat when cache cycles
+
+
+TROUBLESHOOTING:
+================
+
+Q: Same photo showing twice?
+A: This should not happen. If it does, check that session_hash_tracker
+   is properly imported and called in routes.py
+
+Q: Photos not advancing?
+A: Check that pick_file() is working and cache is built
+   Check server logs for [SessionHashTracker] debug messages
+   Verify session_id is in photo state cookie
+
+Q: Session not persisting after refresh?
+A: Cookie settings in routes.py persist_photo_state():
+   - max_age=60*60*24*365 (1 year)
+   - secure=True when HTTPS
+   - samesite="None" when HTTPS, "Lax" otherwise
+   Browser's privacy settings might delete cookies
+
+Q: Error importing session_hash_tracker?
+A: Ensure app/session_hash_tracker.py exists
+   Check that imports in routes.py match function names exactly
+
+
+LOGGING:
+========
+
+Server will output [SessionHashTracker] messages:
+  - Registered session: {session_id}
+  - Marked same-day photo in session {session_id}
+  - Random photo served in session {session_id}
+  - Session {session_id} transitioned to RANDOM phase
+  - Session {session_id} transitioned to SAME_DAY phase
+  - Expired session: {session_id}
+  - Reset session: {session_id}
+
+Enable debug logging to see more:
+  export FLASK_ENV=development
+  export FLASK_DEBUG=1
+
+
+BACKWARDS COMPATIBILITY:
+========================
+
+✓ Existing photo_index and photo_served fields still work
+✓ Old cookies without session_id will generate new UUID
+✓ No database schema changes needed
+✓ No client-side code changes needed
+✓ Config file format unchanged
+
+
+FILES TO REVIEW:
+================
+
+1. app/session_hash_tracker.py - New tracking module
+2. app/session.py - Added session_id field
+3. app/routes.py - Updated /random, /api/random, /clear_cache endpoints
+4. tests/test_session_hash_tracker.py - New unit tests
+5. config.yaml - Uses existing cache.same_day_cycle setting
+"""

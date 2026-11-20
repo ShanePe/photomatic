@@ -30,13 +30,25 @@ from .cache_manager import (
 )
 from .config_manager import load_config
 from .image_utils import get_requests_session, resize_and_compress
+from .session import get_photo_state, persist_photo_state
+from .session_hash_tracker import (
+    get_cycle_phase,
+    has_same_day_photo_been_served,
+    mark_random_photo_served,
+    mark_same_day_photo_served,
+    register_session,
+    reset_session,
+    should_transition_to_random_phase,
+    should_transition_to_same_day_phase,
+    transition_to_random_phase,
+    transition_to_same_day_phase,
+)
 from .weather_utils import (
     get_cached_weather,
     map_metno_symbol,
     map_openmeteo_code,
     set_cached_weather,
 )
-from .session import get_photo_state, persist_photo_state
 from .version import __version__
 
 # Healthcheck API call status cache
@@ -199,9 +211,12 @@ def index():
 def random_image():
     """
     Serve a randomly selected and compressed image from the photo root directory.
-    Handles cache building state, file selection, image compression, and logging.
-    Tracks photo serving statistics per session and returns image with appropriate
-    MIME type and dimensions.
+    
+    Implements a cycle-based serving pattern:
+    1. Show all same-day photos sequentially (no duplicates within cycle)
+    2. Show N random photos from the general pool (N = same_day_cycle config)
+    3. Repeat
+    
     Returns:
         Flask Response: Compressed image file with JPEG MIME type, or error response.
         - 200: Image served successfully
@@ -214,8 +229,56 @@ def random_image():
             _set_api_status("random", False, "Cache is being built")
             return "Cache is being built, please try again shortly.", 500
 
-        path = pick_file(G.PHOTO_ROOT)
         state = get_photo_state()
+        session_id = state.get("session_id")
+        cfg = load_config()
+        random_pool_size = int(cfg.get("cache", {}).get("same_day_cycle", 100))
+        
+        # Register or update session with pool size
+        register_session(session_id, random_pool_size)
+        
+        # Determine which phase we're in and get the appropriate photo
+        cycle_phase = get_cycle_phase(session_id)
+        path = None
+        
+        if cycle_phase == "same_day":
+            # Try to get a same-day photo
+            path = pick_file(G.PHOTO_ROOT, state)
+            
+            # If we got a same-day photo and haven't served it yet, use it
+            if path and not has_same_day_photo_been_served(session_id, path):
+                mark_same_day_photo_served(session_id, path)
+            elif path:
+                # We got a same-day photo but already served it; transition to random phase
+                transition_to_random_phase(session_id)
+                cycle_phase = "random"
+                # Recursively call pick_file to get a random photo
+                path = pick_file(G.PHOTO_ROOT, state)
+                if path:
+                    mark_random_photo_served(session_id)
+            else:
+                # No more same-day photos; transition to random phase
+                transition_to_random_phase(session_id)
+                cycle_phase = "random"
+                path = pick_file(G.PHOTO_ROOT, state)
+                if path:
+                    mark_random_photo_served(session_id)
+        
+        elif cycle_phase == "random":
+            # We're in random phase
+            if should_transition_to_same_day_phase(session_id):
+                # We've shown enough random photos; go back to same-day
+                transition_to_same_day_phase(session_id)
+                cycle_phase = "same_day"
+                path = pick_file(G.PHOTO_ROOT, state)
+                if path and not has_same_day_photo_been_served(session_id, path):
+                    mark_same_day_photo_served(session_id, path)
+            else:
+                # Still in random phase; get a random photo
+                path = pick_file(G.PHOTO_ROOT, state)
+                if path:
+                    mark_random_photo_served(session_id)
+        
         if not path:
             _set_api_status("random", False, "No images found")
             return "No images found", 404
@@ -233,7 +296,7 @@ def random_image():
             (
                 "[Routes] Served buffer from %s | Compressed size: %.1f KB | "
                 "Dimensions: %sx%s | MIME: %s | Client IP: %s | UA: %s | "
-                "Photo index: %s : Photo served: %s"
+                "Session: %s | Phase: %s"
             ),
             os.path.basename(path),
             compressed_size / 1024,
@@ -242,8 +305,8 @@ def random_image():
             mime_type,
             client_ip,
             user_agent,
-            state.get("photo_index"),
-            state.get("photo_served"),
+            session_id,
+            cycle_phase,
         )
 
         _set_api_status("random", True)
@@ -258,14 +321,68 @@ def random_image():
 
 @G.app.route("/api/random")
 def api_random_image():
-    """Return JSON metadata for a random photo and where to fetch its image."""
+    """Return JSON metadata for a random photo and where to fetch its image.
+    
+    Implements a cycle-based serving pattern:
+    1. Show all same-day photos sequentially (no duplicates within cycle)
+    2. Show N random photos from the general pool (N = same_day_cycle config)
+    3. Repeat
+    """
     try:
         if G.BUILDING_CACHE:
             _set_api_status("random", False, "Cache is being built")
             return jsonify({"error": "Cache is being built"}), 500
 
-        path = pick_file(G.PHOTO_ROOT)
         state = get_photo_state()
+        session_id = state.get("session_id")
+        cfg = load_config()
+        random_pool_size = int(cfg.get("cache", {}).get("same_day_cycle", 100))
+        
+        # Register or update session with pool size
+        register_session(session_id, random_pool_size)
+        
+        # Determine which phase we're in and get the appropriate photo
+        cycle_phase = get_cycle_phase(session_id)
+        path = None
+        
+        if cycle_phase == "same_day":
+            # Try to get a same-day photo
+            path = pick_file(G.PHOTO_ROOT, state)
+            
+            # If we got a same-day photo and haven't served it yet, use it
+            if path and not has_same_day_photo_been_served(session_id, path):
+                mark_same_day_photo_served(session_id, path)
+            elif path:
+                # We got a same-day photo but already served it; transition to random phase
+                transition_to_random_phase(session_id)
+                cycle_phase = "random"
+                # Recursively call pick_file to get a random photo
+                path = pick_file(G.PHOTO_ROOT, state)
+                if path:
+                    mark_random_photo_served(session_id)
+            else:
+                # No more same-day photos; transition to random phase
+                transition_to_random_phase(session_id)
+                cycle_phase = "random"
+                path = pick_file(G.PHOTO_ROOT, state)
+                if path:
+                    mark_random_photo_served(session_id)
+        
+        elif cycle_phase == "random":
+            # We're in random phase
+            if should_transition_to_same_day_phase(session_id):
+                # We've shown enough random photos; go back to same-day
+                transition_to_same_day_phase(session_id)
+                cycle_phase = "same_day"
+                path = pick_file(G.PHOTO_ROOT, state)
+                if path and not has_same_day_photo_been_served(session_id, path):
+                    mark_same_day_photo_served(session_id, path)
+            else:
+                # Still in random phase; get a random photo
+                path = pick_file(G.PHOTO_ROOT, state)
+                if path:
+                    mark_random_photo_served(session_id)
+        
         if not path:
             _set_api_status("random", False, "No images found")
             return jsonify({"error": "No images found"}), 404
@@ -323,6 +440,7 @@ def random_image_by_path():
 def clear_cache():
     """
     Clear the on-disk cache unless a build is in progress.
+    Also resets the browser's session tracker to allow photo re-serving.
     """
     if G.BUILDING_CACHE:
         return "Cache is currently being built. Try again later.", 503
@@ -331,6 +449,13 @@ def clear_cache():
         G.logger.info("[Routes] Manual cache clear requested by client.")
 
         clear_entire_cache()
+        
+        # Reset the browser's session so the cycling can start fresh
+        state = get_photo_state()
+        session_id = state.get("session_id")
+        cfg = load_config()
+        random_pool_size = int(cfg.get("cache", {}).get("same_day_cycle", 100))
+        reset_session(session_id, random_pool_size)
 
         response = make_response("Cache cleared.", 200)
         response.set_cookie(

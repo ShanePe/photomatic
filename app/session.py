@@ -1,10 +1,12 @@
 """Browser-local slideshow state helpers.
 
 The photo rotation order is stored in a cookie so it is scoped to each browser
-instead of a server-side Flask session.
+instead of a server-side Flask session. A unique session_id is generated per browser
+to track viewed photos server-side and prevent duplicate photo serving.
 """
 
 import json
+import uuid
 
 from flask import g, request
 
@@ -27,6 +29,7 @@ def default_photo_state() -> dict[str, int | str | None]:
         "photo_served": 0,
         "same_day_exhausted_date": None,
         "initialized": True,
+        "session_id": str(uuid.uuid4()),
     }
 
 
@@ -54,6 +57,7 @@ def get_photo_state() -> dict[str, int | str | None]:
             "photo_date": state.get("photo_date"),
             "same_day_exhausted_date": state.get("same_day_exhausted_date"),
             "initialized": bool(state.get("initialized", True)),
+            "session_id": state.get("session_id", str(uuid.uuid4())),
         }
     )
 
@@ -77,6 +81,7 @@ def encode_photo_state(state: dict | None) -> str:
             "photo_served": _coerce_non_negative_int(safe_state.get("photo_served", 0)),
             "same_day_exhausted_date": safe_state.get("same_day_exhausted_date"),
             "initialized": bool(safe_state.get("initialized", True)),
+            "session_id": safe_state.get("session_id", str(uuid.uuid4())),
         },
         separators=(",", ":"),
     )

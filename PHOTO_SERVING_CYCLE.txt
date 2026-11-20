@@ -1,0 +1,121 @@
+"""
+PHOTO SERVING CYCLE DIAGRAM
+============================
+
+Assuming: 5 same-day photos, 1000 total photos, same_day_cycle = 100
+
+Browser Timeline:
+=================
+
+Request │ Phase      │ Photo Type      │ Description
+────────┼────────────┼─────────────────┼─────────────────────────────────
+   1-5  │ same_day   │ same-day photo  │ Sequential same-day photos
+        │            │ (1-5)           │ Marked as served, no repeats
+────────┼────────────┼─────────────────┼─────────────────────────────────
+   6    │ same_day→  │ same-day photo  │ Tried to get same-day but all
+        │ random     │ (returned)      │ served → transition to random
+────────┼────────────┼─────────────────┼─────────────────────────────────
+   7-106│ random     │ random photo    │ 100 random photos from pool
+        │            │ from pool       │ Counter increments 1-100
+────────┼────────────┼─────────────────┼─────────────────────────────────
+  107    │ random→    │ same-day photo  │ Random quota reached (100)
+        │ same_day   │ (1)             │ → transition back to same_day
+        │            │                 │ → reset same_day tracking
+        │            │                 │ → serve first same-day again
+────────┼────────────┼─────────────────┼─────────────────────────────────
+  108-112│ same_day   │ same-day photo  │ Sequential same-day photos
+        │            │ (2-5, 1)        │ (cycle back through, no duplicates)
+────────┼────────────┼─────────────────┼─────────────────────────────────
+  113-212│ random     │ random photo    │ 100 random photos again
+────────┼────────────┼─────────────────┼─────────────────────────────────
+  ... (repeats forever)
+
+Session State Structure:
+========================
+
+{
+  "session_id": "uuid-here",
+  "photo_date": "2024-01-15",
+  "photo_index": 0,
+  "photo_served": 0,
+  "initialized": true
+}
+
+Server-Side Session Tracking:
+{
+  "uuid-here": {
+    "created": 1234567890,              # Unix timestamp
+    "cycle_phase": "same_day",          # or "random"
+    "same_day_hashes": set(),           # MD5 hashes of served same-day photos
+    "random_shown_count": 0,            # Count in current random phase
+    "cycle_random_pool_size": 100       # Configured quota
+  }
+}
+
+Key Transition Points:
+======================
+
+1. same_day → random:
+   - Occurs when: Tried to get a same-day photo but all have been served
+   - Action: Clear same_day_hashes, set random_shown_count = 0
+   - Next request: Serve random photo, increment counter
+
+2. random → same_day:
+   - Occurs when: random_shown_count >= cycle_random_pool_size
+   - Action: Clear same_day_hashes, set random_shown_count = 0
+   - Next request: Try same-day photos (they're fresh now)
+
+Session Lifecycle:
+==================
+
+1. Browser visits for first time
+   → Generate new session_id (UUID)
+   → Register session on first /random or /api/random request
+   → Set cycle_phase = "same_day"
+
+2. Browser continues using session
+   → Photos cycle through as described above
+   → Session cookie persists for 1 year (configurable)
+   → Server tracks session for 24 hours (auto-cleanup after expiry)
+
+3. Browser refreshes page
+   → Session cookie sent back
+   → Same session_id recognized
+   → Continues from current phase/position
+
+4. Browser clears cache (manual or via /clear_cache)
+   → Session tracking reset to initial state
+   → Cookie reset, server resets phase tracking
+   → Starts fresh cycle from beginning
+
+5. Browser inactive for >24 hours
+   → Server auto-expires session in memory
+   → Cookie still exists on browser
+   → Next request creates new session (new UUID or old UUID, doesn't matter)
+   → Starts fresh cycle
+
+Client Behavior Examples:
+========================
+
+Scenario A: Normal slideshow continuation
+  Request 1:   /api/random → { phase: "same_day", photo: "today.jpg" }
+  Request 2:   /api/random → { phase: "same_day", photo: "today2.jpg" }
+  Request 3:   Browser refresh (cookie persists session_id)
+  Request 3:   /api/random → { phase: "same_day", photo: "today3.jpg" }
+  Result: ✓ Continues from same position, no repeats
+
+Scenario B: Tab/window switching
+  Tab1 Request:   /api/random with session_id=ABC → same_day photo
+  Tab2 Request:   /api/random with session_id=ABC → different same_day photo
+  Result: ✓ Both tabs share same session, no duplicate photos shown
+  
+  Alternative: Incognito window
+  Incognito:      No cookie → New session_id=DEF → independent cycle
+  Result: ✓ Incognito has its own session, unrelated to Tab1
+
+Scenario C: Manual reset
+  Request:  POST /clear_cache
+  Result:   ✓ Cache cleared, session reset to initial state
+            ✓ Next request starts fresh from first same-day photo
+            ✓ All same-day photos available to serve again
+"""

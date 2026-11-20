@@ -68,7 +68,7 @@ def test_api_random_route_returns_photo_age_payload(tmp_path, monkeypatch):
     today = datetime.date.today()
     ten_years_ago = datetime.date(today.year - 10, today.month, today.day)
 
-    monkeypatch.setattr(routes, "pick_file", lambda _base_dir: str(img_path))
+    monkeypatch.setattr(routes, "pick_file", lambda _base_dir, state=None: str(img_path))
     monkeypatch.setattr(routes, "get_photo_date", lambda _path: ten_years_ago)
     monkeypatch.setattr(routes, "resize_and_compress", fake_resize_and_compress)
 
