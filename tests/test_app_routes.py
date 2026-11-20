@@ -11,6 +11,7 @@ from PIL import Image
 import app.routes as routes
 from app import cache_manager
 from app import globals as G
+from app.session import PHOTO_STATE_SESSION_KEY, configure_server_sessions
 
 
 def test_random_route_serves_image(tmp_path):
@@ -85,6 +86,51 @@ def test_api_random_route_returns_photo_age_payload(tmp_path, monkeypatch):
     assert captured["overlays"]["top_right"] == ""
 
 
+def test_api_random_advances_after_single_same_day_photo(tmp_path):
+    """A client's second request should leave a one-photo same-day pool."""
+    photos = tmp_path / "photos"
+    photos.mkdir()
+
+    today = datetime.date.today()
+    daily_photo = photos / f"{today.strftime('%Y%m%d')}_daily.jpg"
+    older_photo = photos / "20180101_older.jpg"
+    Image.new("RGB", (120, 90), (10, 20, 30)).save(daily_photo, format="JPEG")
+    Image.new("RGB", (120, 90), (30, 20, 10)).save(older_photo, format="JPEG")
+
+    instance_dir = tmp_path / "instance"
+    instance_dir.mkdir()
+    G.app.instance_path = str(instance_dir)
+    configure_server_sessions()
+    G.CACHE_DIR = os.path.join(G.app.instance_path, "cache")
+    G.CACHE_DIR_PHOTO = os.path.join(G.CACHE_DIR, "photos")
+    os.makedirs(G.CACHE_DIR_PHOTO, exist_ok=True)
+    G.PHOTO_ROOT = str(photos)
+    cache_manager.build_cache(str(photos))
+
+    first_client = G.app.test_client()
+    second_client = G.app.test_client()
+    first = first_client.get("/api/random")
+    other_client_first = second_client.get("/api/random")
+    second = first_client.get("/api/random")
+
+    assert first.status_code == 200
+    assert other_client_first.status_code == 200
+    assert second.status_code == 200
+    assert first.get_json()["photo_path"] == str(daily_photo)
+    assert other_client_first.get_json()["photo_path"] == str(daily_photo)
+    assert second.get_json()["photo_path"] == str(older_photo)
+
+    session_cookie = first.headers.get("Set-Cookie", "")
+    assert "photomatic_session=" in session_cookie
+    assert "photomatic_photo_state" not in session_cookie
+    first_session_cookie = first_client.get_cookie("photomatic_session")
+    other_session_cookie = second_client.get_cookie("photomatic_session")
+    assert first_session_cookie is not None
+    assert other_session_cookie is not None
+    assert first_session_cookie.value != other_session_cookie.value
+    assert "photo_index" not in first_session_cookie.value
+
+
 def test_random_image_by_path_rejects_invalid_path(tmp_path):
     """/random_image should reject paths outside the configured photo root."""
     photos = tmp_path / "photos"
@@ -118,6 +164,19 @@ def test_clear_cache_logs_request(monkeypatch):
 
     assert resp.status_code in (200, 503)
     assert any("GET /clear_cache" in message for message in messages)
+
+
+def test_clear_cache_removes_client_photo_state():
+    """Clearing the cache also resets only the requesting client's photo state."""
+    client = G.app.test_client()
+    with client.session_transaction() as server_session:
+        server_session[PHOTO_STATE_SESSION_KEY] = {"photo_index": 4}
+
+    response = client.get("/clear_cache")
+
+    assert response.status_code == 200
+    with client.session_transaction() as server_session:
+        assert PHOTO_STATE_SESSION_KEY not in server_session
 
 
 def test_random_image_routes_fail_during_cache_build(tmp_path):

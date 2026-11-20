@@ -6,6 +6,9 @@ Exports the shared Flask `app` (from `globals`) and a minimal
 
 from .globals import app, ensure_instance_dirs, logger, CONFIG
 from .version import __version__
+from .session import configure_server_sessions
+
+configure_server_sessions()
 
 __all__ = ["app", "create_app", "logger", "CONFIG", "__version__"]
 
@@ -19,6 +22,7 @@ def create_app(instance_path: str | None = None):
     if instance_path:
         app.instance_path = instance_path
 
+    configure_server_sessions()
     ensure_instance_dirs(app.instance_path)
     logger.info("Photomatic app initialized; instance_path=%s", app.instance_path)
     return app

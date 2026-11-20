@@ -457,18 +457,8 @@ def clear_cache():
         random_pool_size = int(cfg.get("cache", {}).get("same_day_cycle", 100))
         reset_session(session_id, random_pool_size)
 
-        response = make_response("Cache cleared.", 200)
-        response.set_cookie(
-            "photomatic_photo_state",
-            "",
-            expires=0,
-            path="/",
-            samesite="None",
-            secure=True,
-            httponly=True,
-            partitioned=True,
-        )
-        return response
+        clear_photo_state()
+        return make_response("Cache cleared.", 200)
 
     except Exception as e:  # pylint: disable=broad-except
         G.logger.error("[Routes] Error clearing cache: %s", e)

@@ -114,12 +114,6 @@ LOG_FILENAME = "photomatic.log"
 # same-day images that must be preserved. Using set for O(1) lookup.
 SAME_DAY_KEYS: set[str] = set()
 
-# Flask session keys used by the slideshow
-SESSION_INITIALIZED = "initialized"
-SESSION_PHOTO_INDEX = "photo_index"
-SESSION_PHOTO_SERVED = "photo_served"
-
-
 def _normalize_instance_path(instance_root) -> Path:
     """
     Normalize and return a Path for the Flask instance root.
