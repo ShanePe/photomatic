@@ -40,20 +40,24 @@ This document lists the main modules in the Photomatic codebase and summarizes t
     - `convert_heic_to_jpg(heic_path)` — simple HEIC -> JPEG conversion wrapper.
 
 - File: [app/cache_manager.py](app/cache_manager.py)
-  - Purpose: Build and maintain line-oriented cache files and prune the cached JPEGs.
+  - Purpose: Build and maintain the SQLite photo index and prune cached JPEGs.
   - Publics / important functions:
     - `build_cache(base_dir)` —
-      - Walks `base_dir`, writes two files under `instance/cache/`: `cache_all.txt` (all photos) and `cache_same_day.txt` (photos with same month/day as today across years).
+      - Walks `base_dir` and transactionally stores photo paths with a same-day flag in `instance/cache/photomatic_cache.sqlite3`.
+      - Same-day photos match today's month and day across years.
       - Fills `SAME_DAY_KEYS` with MD5(path) values for same-day photos so pruning retains them.
       - Uses `get_photo_date()` for date resolution.
     - `get_photo_date(path)` — determines date priority: filename patterns → EXIF (`DateTimeOriginal`, `DateTimeDigitized`, `DateTime`) → file mtime.
     - `parse_date_from_filename(filename)` — extracts YYYYMMDD or YYYY-MM-DD patterns.
     - `prune_cache()` — memory-efficient min-heap-based removal of oldest cached JPEGs until `CACHE_COUNT <= CACHE_LIMIT`; retains MD5 keys in `SAME_DAY_KEYS`.
-    - `get_line(filepath, file_line_idx)` and `count_lines(filepath)` — small helpers to read single/random lines without loading files into memory.
-    - `pick_file(base_dir)` — session-aware selection logic:
-      - Rebuilds cache if the day changed or files are missing.
-      - Serves sequential same-day photos per session using session keys (`photo_index`, `photo_date`) and falls back to random selection from `cache_all.txt`.
+    - `pick_file(base_dir)` — selects from the prebuilt SQLite index and never scans or rebuilds the photo directory.
     - `format_date_with_suffix(dt)` — helper to add ordinal suffixes to day numbers (e.g., `1st Jan 2020`).
+
+- File: [app/cache_service.py](app/cache_service.py)
+  - Purpose: Build the photo index at startup, rebuild it at midnight, expire inactive client records, and expose service health through the SQLite database.
+
+- File: [app/client_photo_tracker.py](app/client_photo_tracker.py)
+  - Purpose: Track photo selection state per SHA-256 hash of the client IP. Entries expire after 48 hours without activity.
 
 **Top-level entry**
 
@@ -63,7 +67,8 @@ This document lists the main modules in the Photomatic codebase and summarizes t
     - Imports the shared `G` module (package-relative) and other helpers from `image_utils` and `cache_manager`.
     - Defines routes:
       - `/` — renders `templates/index.html`.
-      - `/random` — main image endpoint: orchestrates `pick_file()`, `resize_and_compress()`, logs request metadata, and returns a JPEG response. Handles `BUILDING_CACHE` and common image errors.
+      - `/random` and `/api/random` — select from the prebuilt SQLite index and return an image or photo metadata.
+      - `/healthcheck` — reports application API status and cache-service heartbeat/index status.
     - CLI helpers:
       - `parse_args()` — `--photos` and `--port`.
       - `run_app(args)` — sets `G.PHOTO_ROOT`, prunes initial cache if needed, and starts `G.app.run()`.
@@ -71,11 +76,11 @@ This document lists the main modules in the Photomatic codebase and summarizes t
 **Templates**
 
 - File: [templates/index.html](templates/index.html)
-  - Simple fullscreen slideshow UI (served by `/`). The JS front-end hits `/random` to fetch images and displays them full-screen with transitions. Inspect this file for client-side behavior and expected response shape.
+  - Simple fullscreen slideshow UI (served by `/`). The JS front-end requests `/api/random` for photo metadata and displays the returned image with transitions.
 
 Notes / Conventions
 
-- Caching is intentionally file-based and line-oriented to handle very large photo collections without loading everything into memory.
+- The photo index and client tracking state share `instance/cache/photomatic_cache.sqlite3`; deleting it resets both.
 - Cached JPEG filenames are MD5 hashes of the original path. `SAME_DAY_KEYS` stores those MD5 keys to prevent pruning the same-day images.
 - Date resolution is deterministic and tolerant of missing EXIF — `get_photo_date()` falls back to mtime.
 - All modules use package-relative imports (e.g., `from . import globals as G`) so code runs correctly using `python -m app.app` or `python -m app`.

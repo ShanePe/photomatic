@@ -1,10 +1,4 @@
-"""Cache and photo date utilities.
-
-Responsible for building the line-oriented cache files used by the
-slideshow (`cache_all.txt` and `cache_same_day.txt`), determining
-photo dates (filename → EXIF → mtime), and pruning the cached JPEGs
-under `instance/cache/photos/` while preserving same-day entries.
-"""
+"""SQLite photo-index construction, photo-date utilities, and image-cache pruning."""
 
 import datetime
 import hashlib
@@ -14,6 +8,9 @@ import os
 import random
 import re
 import shutil
+import sqlite3
+import tempfile
+import time
 from contextlib import contextmanager
 
 try:
@@ -25,6 +22,7 @@ from flask import g
 from PIL import ExifTags, Image, UnidentifiedImageError
 
 from . import globals as G
+from .cache_database import connect, open_database
 from .session import get_photo_state
 
 
@@ -88,22 +86,13 @@ def _count_cached_images_on_disk():
     return count
 
 
-def _load_same_day_keys_from_cache_file():
-    """Load protected same-day cache keys from cache_same_day.txt on disk."""
-    same_day_file = os.path.join(G.CACHE_DIR, "cache_same_day.txt")
-    keys = set()
-
-    try:
-        with open(same_day_file, "r", encoding="utf-8") as f:
-            for line in f:
-                path = line.strip()
-                if not path:
-                    continue
-                keys.add(hashlib.md5(path.encode()).hexdigest())
-    except FileNotFoundError:
-        return keys
-
-    return keys
+def _load_same_day_keys_from_database():
+    """Load protected same-day image keys from the SQLite photo index."""
+    with open_database() as connection:
+        paths = connection.execute(
+            "SELECT path FROM photos WHERE same_day = 1"
+        ).fetchall()
+    return {hashlib.md5(path.encode()).hexdigest() for (path,) in paths}
 
 
 # --- Metadata utilities ---
@@ -278,7 +267,7 @@ def prune_cache():
             if current_count <= G.CACHE_LIMIT:
                 return
 
-            protected_keys = _load_same_day_keys_from_cache_file()
+            protected_keys = _load_same_day_keys_from_database()
             if not protected_keys and G.SAME_DAY_KEYS:
                 protected_keys = set(G.SAME_DAY_KEYS)
 
@@ -367,12 +356,11 @@ def clear_directory(path):
 
 def clear_entire_cache():
     """
-    Completely clear all cached JPEGs and cache text files.
+    Completely clear all cached JPEGs and indexed client/photo state.
 
     Removes:
       - All files under G.CACHE_DIR_PHOTO and G.CACHE_DIR_ICON
-      - cache_all.txt
-      - cache_same_day.txt
+      - Indexed photo paths, build metadata, and client tracking state
 
     Resets:
       - G.CACHE_COUNT
@@ -404,24 +392,15 @@ def clear_entire_cache():
                 )
                 errors = True
 
-        # 2. Remove cache text files
-        for txt in ("cache_all.txt", "cache_same_day.txt"):
-            txt_path = os.path.join(G.CACHE_DIR, txt)
-            try:
-                os.remove(txt_path)
-                G.logger.info("[CacheManager] Removed cache index file: %s", txt_path)
-            except FileNotFoundError:
-                G.logger.info(
-                    "[CacheManager] Cache index file not found (already cleared): %s",
-                    txt_path,
-                )
-            except OSError as e:
-                G.logger.warning(
-                    "[CacheManager] Failed to remove cache index file %s: %s",
-                    txt_path,
-                    e,
-                )
-                errors = True
+        try:
+            from .cache_database import clear_database
+
+            clear_database()
+        except sqlite3.Error as e:
+            G.logger.warning(
+                "[CacheManager] Failed to clear SQLite cache: %s", e
+            )
+            errors = True
 
         # 3. Reset globals
         G.CACHE_COUNT = 0
@@ -435,96 +414,113 @@ def clear_entire_cache():
         return not errors
 
 
-# --- Cache file utilities ---
-
-
-def get_line(filepath, file_line_idx):
-    """Return the 0-based `file_line_idx` line from `filepath` or `None`.
-
-    This reads the file sequentially and does not load the whole file into memory.
-    """
-    try:
-        with open(filepath, encoding="utf-8") as f:
-            for i, line in enumerate(f):
-                if i == file_line_idx:
-                    return line.strip()
-    except FileNotFoundError:
-        return None
-    return None
-
-
-def count_lines(filepath):
-    """Return number of lines in `filepath` or 0 if it doesn't exist."""
-    try:
-        with open(filepath, encoding="utf-8") as f:
-            return sum(1 for _ in f)
-    except FileNotFoundError:
-        return 0
-
-
-def build_cache(base_dir):
-    """Scan `base_dir` and atomically rebuild cache files.
-
-    Writes two line-oriented files into `G.CACHE_DIR`:
-      - `cache_all.txt`: all photo paths not matching today's month/day
-      - `cache_same_day.txt`: paths matching today's month/day across years
-
-    Also populates `G.SAME_DAY_KEYS` with MD5(path) keys to prevent
-    `prune_cache()` from deleting those JPEGs.
-    """
+def build_cache(base_dir, progress_callback=None):
+    """Scan `base_dir` and transactionally rebuild the SQLite photo index."""
     with _cache_process_lock("cache_build.lock"):
         G.CACHE_DATE = None
         G.BUILDING_CACHE = True
         G.SAME_DAY_KEYS = set()
+        staging_path = None
 
         try:
+            staging_file = tempfile.NamedTemporaryFile(
+                prefix="photomatic-cache-build-",
+                suffix=".sqlite3",
+                dir=G.CACHE_DIR,
+                delete=False,
+            )
+            staging_path = staging_file.name
+            staging_file.close()
             today = datetime.date.today()
             extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic")
             ignore_dirs = {"thumbnails", "cache", ".git", "__pycache__", "@__thumb"}
-            all_path = os.path.join(G.CACHE_DIR, "cache_all.txt")
-            same_day_path = os.path.join(G.CACHE_DIR, "cache_same_day.txt")
-            all_tmp_path = all_path + ".tmp"
-            same_day_tmp_path = same_day_path + ".tmp"
+            staging_connection = sqlite3.connect(staging_path, timeout=30)
+            try:
+                staging_connection.execute(
+                    "CREATE TABLE photos (path TEXT PRIMARY KEY, same_day INTEGER NOT NULL)"
+                )
+                with staging_connection:
+                    staging_connection.execute("BEGIN")
+                    last_progress = time.monotonic()
+                    for root, _, files in os.walk(base_dir):
+                        if any(ign in root.lower() for ign in ignore_dirs):
+                            continue
 
-            with open(all_tmp_path, "w", encoding="utf-8") as f_all, open(
-                same_day_tmp_path, "w", encoding="utf-8"
-            ) as f_same:
-                for root, _, files in os.walk(base_dir):
-                    if any(ign in root.lower() for ign in ignore_dirs):
-                        continue
+                        for fn in files:
+                            if fn.lower().endswith(extensions):
+                                path = os.path.join(root, fn)
+                                photo_date = get_photo_date(path)
+                                same_day = bool(
+                                    photo_date
+                                    and photo_date.month == today.month
+                                    and photo_date.day == today.day
+                                )
+                                staging_connection.execute(
+                                    "INSERT OR REPLACE INTO photos (path, same_day) VALUES (?, ?)",
+                                    (path, int(same_day)),
+                                )
+                                if same_day:
+                                    G.SAME_DAY_KEYS.add(
+                                        hashlib.md5(path.encode()).hexdigest()
+                                    )
+                                if (
+                                    progress_callback
+                                    and time.monotonic() - last_progress >= 30
+                                ):
+                                    progress_callback()
+                                    last_progress = time.monotonic()
+            finally:
+                staging_connection.close()
 
-                    for fn in files:
-                        if fn.lower().endswith(extensions):
-                            path = os.path.join(root, fn)
-                            photo_date = get_photo_date(path)
-                            if (
-                                photo_date
-                                and photo_date.month == today.month
-                                and photo_date.day == today.day
-                            ):
-                                f_same.write(path + "\n")
-                                key_hash = hashlib.md5(path.encode()).hexdigest()
-                                G.SAME_DAY_KEYS.add(key_hash)
-                            else:
-                                f_all.write(path + "\n")
-
-            os.replace(all_tmp_path, all_path)
-            os.replace(same_day_tmp_path, same_day_path)
+            connection = connect()
+            staging_attached = False
+            try:
+                connection.execute("ATTACH DATABASE ? AS staging", (staging_path,))
+                staging_attached = True
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute("DELETE FROM photos")
+                connection.execute(
+                    """
+                    INSERT INTO photos (path, same_day)
+                    SELECT path, same_day FROM staging.photos
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO cache_metadata (key, value)
+                    VALUES ('built_date', ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """,
+                    (today.isoformat(),),
+                )
+                connection.commit()
+            finally:
+                if connection.in_transaction:
+                    connection.rollback()
+                try:
+                    if staging_attached:
+                        connection.execute("DETACH DATABASE staging")
+                finally:
+                    connection.close()
             G.CACHE_DATE = today
         finally:
-            G.BUILDING_CACHE = False
+            try:
+                if staging_path and os.path.exists(staging_path):
+                    os.remove(staging_path)
+            finally:
+                G.BUILDING_CACHE = False
 
 
 def pick_file(base_dir, state=None):
     """Select the next photo path for the current browser.
 
     Behavior:
-      - If the cache is stale or missing, rebuild via `build_cache()`.
+      - Uses the indexes prepared by the cache service; it never rebuilds them.
       - Serve same-day photos sequentially for the current browser first.
       - Interleave non-same-day photos so same-day entries do not starve the
         general pool. `G.SAME_DAY_CYCLE` controls how many same-day photos appear
         before a random general photo is injected.
-      - When the same-day list is exhausted, keep selecting from `cache_all.txt`.
+      - When the same-day list is exhausted, select from the general photo pool.
 
     Returns a filesystem path string or `None` if no photos are available.
     """
@@ -535,44 +531,68 @@ def pick_file(base_dir, state=None):
             g.photo_state = state
 
     today = datetime.date.today()
-    all_file = os.path.join(G.CACHE_DIR, "cache_all.txt")
-    same_day_file = os.path.join(G.CACHE_DIR, "cache_same_day.txt")
+    with open_database() as connection:
+        built = connection.execute(
+            "SELECT 1 FROM cache_metadata WHERE key = 'built_date'"
+        ).fetchone()
+        if not built:
+            return None
 
-    if G.CACHE_DATE != today or not os.path.exists(all_file):
-        build_cache(base_dir)
+        if state.get("photo_date") != str(today):
+            state["photo_date"] = str(today)
+            state["photo_index"] = 0
+            state["photo_served"] = 0
+            state.pop("same_day_exhausted_date", None)
 
-    if state.get("photo_date") != str(today):
-        state["photo_date"] = str(today)
-        state["photo_index"] = 0
-        state["photo_served"] = 0
-        state.pop("same_day_exhausted_date", None)
+        same_day_exhausted = state.get("same_day_exhausted_date") == str(today)
+        all_count = connection.execute(
+            "SELECT COUNT(*) FROM photos WHERE same_day = 0"
+        ).fetchone()[0]
+        same_day_count = connection.execute(
+            "SELECT COUNT(*) FROM photos WHERE same_day = 1"
+        ).fetchone()[0]
+        path = None
+        idx = _coerce_non_negative_int(state.get("photo_index", 0))
 
-    same_day_exhausted = state.get("same_day_exhausted_date") == str(today)
+        if not same_day_exhausted:
+            row = connection.execute(
+                """
+                SELECT path FROM photos WHERE same_day = 1
+                ORDER BY path LIMIT 1 OFFSET ?
+                """,
+                (idx,),
+            ).fetchone()
+            path = row[0] if row else None
+            if not path:
+                state["same_day_exhausted_date"] = str(today)
 
-    total = count_lines(all_file)
-    path = None
-    idx = _coerce_non_negative_int(state.get("photo_index", 0))
+        same_day_streak = _coerce_non_negative_int(state.get("photo_served", 0))
+        max_same_day_streak = max(0, int(G.SAME_DAY_CYCLE))
 
-    if not same_day_exhausted:
-        path = get_line(same_day_file, idx)
-        if not path:
-            state["same_day_exhausted_date"] = str(today)
+        should_serve_same_day = bool(path) and (
+            all_count == 0
+            or max_same_day_streak <= 0
+            or same_day_streak < max_same_day_streak
+        )
 
-    same_day_streak = _coerce_non_negative_int(state.get("photo_served", 0))
-    max_same_day_streak = max(0, int(G.SAME_DAY_CYCLE))
+        if should_serve_same_day:
+            state["photo_index"] = idx + 1
+            state["photo_served"] = same_day_streak + 1
+            return path
 
-    should_serve_same_day = bool(path) and (
-        total == 0 or max_same_day_streak <= 0 or same_day_streak < max_same_day_streak
-    )
+        if all_count > 0:
+            state["photo_served"] = 0
+            row = connection.execute(
+                """
+                SELECT path FROM photos WHERE same_day = 0
+                ORDER BY path LIMIT 1 OFFSET ?
+                """,
+                (random.randrange(all_count),),
+            ).fetchone()
+            return row[0] if row else None
 
-    if should_serve_same_day:
-        state["photo_index"] = idx + 1
-        state["photo_served"] = same_day_streak + 1
-        return path
-
-    if total > 0:
-        state["photo_served"] = 0
-        rand_idx = random.randrange(total)
-        return get_line(all_file, rand_idx)
-
-    return None
+        if same_day_count:
+            return connection.execute(
+                "SELECT path FROM photos WHERE same_day = 1 ORDER BY path LIMIT 1"
+            ).fetchone()[0]
+        return None

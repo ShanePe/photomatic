@@ -5,6 +5,7 @@ Flask route handlers for the photo slideshow application.
 # Standard library imports
 import datetime
 import os
+import sqlite3
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
@@ -26,23 +27,19 @@ from .cache_manager import (
     format_date_with_suffix,
     get_image_metadata,
     get_photo_date,
-    pick_file,
+)
+from .cache_database import (
+    cache_service_is_building,
+    get_cache_service_health,
+    set_cache_service_health,
+)
+from .client_photo_tracker import (
+    CacheNotReadyError,
+    client_key_from_ip,
+    select_photo,
 )
 from .config_manager import load_config
 from .image_utils import get_requests_session, resize_and_compress
-from .session import clear_photo_state, get_photo_state, persist_photo_state
-from .session_hash_tracker import (
-    get_cycle_phase,
-    has_same_day_photo_been_served,
-    mark_random_photo_served,
-    mark_same_day_photo_served,
-    register_session,
-    reset_session,
-    should_transition_to_random_phase,
-    should_transition_to_same_day_phase,
-    transition_to_random_phase,
-    transition_to_same_day_phase,
-)
 from .weather_utils import (
     get_cached_weather,
     map_metno_symbol,
@@ -146,6 +143,19 @@ def _prepare_random_photo_payload(path: str) -> dict[str, str]:
     }
 
 
+def _select_photo_for_client():
+    """Select the next photo using the requesting client's hashed IP."""
+    cfg = load_config()
+    pool_size = int(cfg.get("cache", {}).get("same_day_cycle", 100))
+    client_key = client_key_from_ip(request.remote_addr)
+    return select_photo(client_key, pool_size)
+
+
+def _cache_build_in_progress():
+    """Check local and shared service state before serving cached files."""
+    return G.BUILDING_CACHE or cache_service_is_building()
+
+
 @G.app.before_request
 def log_request():
     """Log each incoming HTTP request so cache rebuild activity is visible."""
@@ -158,20 +168,35 @@ def log_request():
 def healthcheck():
     """Return API health status and cache state."""
     failed = [name for name, status in _api_call_status.items() if not status["ok"]]
+    try:
+        cache_service_health = get_cache_service_health()
+    except (OSError, sqlite3.Error) as e:
+        cache_service_health = {"ok": False, "last_error": str(e)}
+    if not cache_service_health["ok"]:
+        failed.append("cache_service")
     if failed:
+        details = {k: v for k, v in _api_call_status.items() if not v["ok"]}
+        if not cache_service_health["ok"]:
+            details["cache_service"] = cache_service_health
         return (
             jsonify(
                 {
                     "status": "fail",
                     "failed": failed,
-                    "details": {
-                        k: v for k, v in _api_call_status.items() if not v["ok"]
-                    },
+                    "details": details,
+                    "cache_service": cache_service_health,
                 }
             ),
             500,
         )
-    return jsonify({"status": "ok", "cache": _api_call_status, "version": __version__})
+    return jsonify(
+        {
+            "status": "ok",
+            "cache": _api_call_status,
+            "cache_service": cache_service_health,
+            "version": __version__,
+        }
+    )
 
 
 @G.app.route("/api/config")
@@ -210,10 +235,10 @@ def index():
 @G.app.route("/random")
 def random_image():
     """
-    Serve a randomly selected and compressed image from the photo root directory.
+    Serve a selected and compressed image from the SQLite photo index.
     
     Implements a cycle-based serving pattern:
-    1. Show all same-day photos sequentially (no duplicates within cycle)
+    1. Show all same-day photos sequentially
     2. Show N random photos from the general pool (N = same_day_cycle config)
     3. Repeat
     
@@ -221,63 +246,15 @@ def random_image():
         Flask Response: Compressed image file with JPEG MIME type, or error response.
         - 200: Image served successfully
         - 404: No images found in photo root
-        - 503: Cache is currently being built
+        - 503: Photo cache is not ready
         - 500: Error occurred during image processing
     """
     try:
-        if G.BUILDING_CACHE:
+        if _cache_build_in_progress():
             _set_api_status("random", False, "Cache is being built")
-            return "Cache is being built, please try again shortly.", 500
+            return "Cache is being built, please try again shortly.", 503
 
-        state = get_photo_state()
-        session_id = state.get("session_id")
-        cfg = load_config()
-        random_pool_size = int(cfg.get("cache", {}).get("same_day_cycle", 100))
-        
-        # Register or update session with pool size
-        register_session(session_id, random_pool_size)
-        
-        # Determine which phase we're in and get the appropriate photo
-        cycle_phase = get_cycle_phase(session_id)
-        path = None
-        
-        if cycle_phase == "same_day":
-            # Try to get a same-day photo
-            path = pick_file(G.PHOTO_ROOT, state)
-            
-            # If we got a same-day photo and haven't served it yet, use it
-            if path and not has_same_day_photo_been_served(session_id, path):
-                mark_same_day_photo_served(session_id, path)
-            elif path:
-                # We got a same-day photo but already served it; transition to random phase
-                transition_to_random_phase(session_id)
-                cycle_phase = "random"
-                # Recursively call pick_file to get a random photo
-                path = pick_file(G.PHOTO_ROOT, state)
-                if path:
-                    mark_random_photo_served(session_id)
-            else:
-                # No more same-day photos; transition to random phase
-                transition_to_random_phase(session_id)
-                cycle_phase = "random"
-                path = pick_file(G.PHOTO_ROOT, state)
-                if path:
-                    mark_random_photo_served(session_id)
-        
-        elif cycle_phase == "random":
-            # We're in random phase
-            if should_transition_to_same_day_phase(session_id):
-                # We've shown enough random photos; go back to same-day
-                transition_to_same_day_phase(session_id)
-                cycle_phase = "same_day"
-                path = pick_file(G.PHOTO_ROOT, state)
-                if path and not has_same_day_photo_been_served(session_id, path):
-                    mark_same_day_photo_served(session_id, path)
-            else:
-                # Still in random phase; get a random photo
-                path = pick_file(G.PHOTO_ROOT, state)
-                if path:
-                    mark_random_photo_served(session_id)
+        path = _select_photo_for_client()
         
         if not path:
             _set_api_status("random", False, "No images found")
@@ -295,8 +272,7 @@ def random_image():
         G.logger.info(
             (
                 "[Routes] Served buffer from %s | Compressed size: %.1f KB | "
-                "Dimensions: %sx%s | MIME: %s | Client IP: %s | UA: %s | "
-                "Session: %s | Phase: %s"
+                "Dimensions: %sx%s | MIME: %s | Client IP: %s | UA: %s"
             ),
             os.path.basename(path),
             compressed_size / 1024,
@@ -305,15 +281,15 @@ def random_image():
             mime_type,
             client_ip,
             user_agent,
-            session_id,
-            cycle_phase,
         )
 
         _set_api_status("random", True)
-        response = send_file(cache_file, mimetype=mime_type)
-        return persist_photo_state(response, state)
+        return send_file(cache_file, mimetype=mime_type)
 
-    except (OSError, UnidentifiedImageError, ValueError) as e:
+    except CacheNotReadyError as e:
+        _set_api_status("random", False, str(e))
+        return "Photo cache is not ready.", 503
+    except (OSError, sqlite3.Error, UnidentifiedImageError, ValueError) as e:
         G.logger.error("[Routes] Error serving image: %s", e)
         _set_api_status("random", False, str(e))
         return f"Error: {e}", 500
@@ -324,64 +300,16 @@ def api_random_image():
     """Return JSON metadata for a random photo and where to fetch its image.
     
     Implements a cycle-based serving pattern:
-    1. Show all same-day photos sequentially (no duplicates within cycle)
+    1. Show all same-day photos sequentially
     2. Show N random photos from the general pool (N = same_day_cycle config)
     3. Repeat
     """
     try:
-        if G.BUILDING_CACHE:
+        if _cache_build_in_progress():
             _set_api_status("random", False, "Cache is being built")
-            return jsonify({"error": "Cache is being built"}), 500
+            return jsonify({"error": "Cache is being built"}), 503
 
-        state = get_photo_state()
-        session_id = state.get("session_id")
-        cfg = load_config()
-        random_pool_size = int(cfg.get("cache", {}).get("same_day_cycle", 100))
-        
-        # Register or update session with pool size
-        register_session(session_id, random_pool_size)
-        
-        # Determine which phase we're in and get the appropriate photo
-        cycle_phase = get_cycle_phase(session_id)
-        path = None
-        
-        if cycle_phase == "same_day":
-            # Try to get a same-day photo
-            path = pick_file(G.PHOTO_ROOT, state)
-            
-            # If we got a same-day photo and haven't served it yet, use it
-            if path and not has_same_day_photo_been_served(session_id, path):
-                mark_same_day_photo_served(session_id, path)
-            elif path:
-                # We got a same-day photo but already served it; transition to random phase
-                transition_to_random_phase(session_id)
-                cycle_phase = "random"
-                # Recursively call pick_file to get a random photo
-                path = pick_file(G.PHOTO_ROOT, state)
-                if path:
-                    mark_random_photo_served(session_id)
-            else:
-                # No more same-day photos; transition to random phase
-                transition_to_random_phase(session_id)
-                cycle_phase = "random"
-                path = pick_file(G.PHOTO_ROOT, state)
-                if path:
-                    mark_random_photo_served(session_id)
-        
-        elif cycle_phase == "random":
-            # We're in random phase
-            if should_transition_to_same_day_phase(session_id):
-                # We've shown enough random photos; go back to same-day
-                transition_to_same_day_phase(session_id)
-                cycle_phase = "same_day"
-                path = pick_file(G.PHOTO_ROOT, state)
-                if path and not has_same_day_photo_been_served(session_id, path):
-                    mark_same_day_photo_served(session_id, path)
-            else:
-                # Still in random phase; get a random photo
-                path = pick_file(G.PHOTO_ROOT, state)
-                if path:
-                    mark_random_photo_served(session_id)
+        path = _select_photo_for_client()
         
         if not path:
             _set_api_status("random", False, "No images found")
@@ -400,8 +328,11 @@ def api_random_image():
                 }
             )
         )
-        return persist_photo_state(response, state)
-    except (OSError, UnidentifiedImageError, ValueError) as e:
+        return response
+    except CacheNotReadyError as e:
+        _set_api_status("random", False, str(e))
+        return jsonify({"error": "Photo cache is not ready"}), 503
+    except (OSError, sqlite3.Error, UnidentifiedImageError, ValueError) as e:
         G.logger.error("[Routes] Error preparing random image metadata: %s", e)
         _set_api_status("random", False, str(e))
         return jsonify({"error": "Failed to prepare random image"}), 500
@@ -410,9 +341,9 @@ def api_random_image():
 @G.app.route("/random_image")
 def random_image_by_path():
     """Serve a compressed image for a client-supplied photo path."""
-    if G.BUILDING_CACHE:
+    if _cache_build_in_progress():
         _set_api_status("random", False, "Cache is being built")
-        return jsonify({"error": "Cache is being built"}), 500
+        return jsonify({"error": "Cache is being built"}), 503
 
     path = request.args.get("path", "")
     if not path:
@@ -430,7 +361,7 @@ def random_image_by_path():
         cache_file = payload["cache_file"]
         _, _, mime_type = get_image_metadata(cache_file)
         return send_file(cache_file, mimetype=mime_type)
-    except (OSError, UnidentifiedImageError, ValueError) as e:
+    except (OSError, sqlite3.Error, UnidentifiedImageError, ValueError) as e:
         G.logger.error("[Routes] Error serving image for path %s: %s", path, e)
         _set_api_status("random", False, str(e))
         return jsonify({"error": "Failed to process photo"}), 500
@@ -440,24 +371,18 @@ def random_image_by_path():
 def clear_cache():
     """
     Clear the on-disk cache unless a build is in progress.
-    Also resets the browser's session tracker to allow photo re-serving.
+    Also clears SQLite photo-index and client tracking state.
     """
-    if G.BUILDING_CACHE:
+    if _cache_build_in_progress():
         return "Cache is currently being built. Try again later.", 503
 
     try:
         G.logger.info("[Routes] Manual cache clear requested by client.")
-
-        clear_entire_cache()
+        set_cache_service_health("building", "Manual cache clear is awaiting rebuild")
+        if not clear_entire_cache():
+            set_cache_service_health("unhealthy", "Cache clear did not complete")
+            return "Failed to clear cache.", 500
         
-        # Reset the browser's session so the cycling can start fresh
-        state = get_photo_state()
-        session_id = state.get("session_id")
-        cfg = load_config()
-        random_pool_size = int(cfg.get("cache", {}).get("same_day_cycle", 100))
-        reset_session(session_id, random_pool_size)
-
-        clear_photo_state()
         return make_response("Cache cleared.", 200)
 
     except Exception as e:  # pylint: disable=broad-except

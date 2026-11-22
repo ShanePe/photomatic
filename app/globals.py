@@ -101,8 +101,7 @@ CACHE_DIR_LOG = _resolve_configured_dir(
 
 # Cache layout and filenames (must match expectations in app code)
 CACHE_DIR_NAME = "cache"
-CACHE_ALL_FILENAME = "cache_all.txt"
-CACHE_SAME_DAY_FILENAME = "cache_same_day.txt"
+CACHE_DATABASE_FILENAME = "photomatic_cache.sqlite3"
 CACHE_PHOTOS_SUBDIR = "photos"
 CACHE_ICONS_SUBDIR = "icons"
 

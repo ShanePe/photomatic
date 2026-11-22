@@ -10,6 +10,7 @@ from PIL import Image
 
 from app import cache_manager
 from app import globals as G
+from app.cache_database import open_database
 
 
 def make_image(path, size=(100, 80), color=(10, 20, 30)):
@@ -33,8 +34,8 @@ def setup_cache_dirs(tmp_path):
     return G.CACHE_DIR, G.CACHE_DIR_PHOTO
 
 
-def test_build_cache_creates_files(tmp_path):
-    """Test that build_cache creates cache_all.txt and cache_same_day.txt files."""
+def test_build_cache_populates_sqlite_index(tmp_path):
+    """Test that build_cache indexes photo paths and marks same-day images."""
     photos = Path(str(tmp_path).replace("_cache_", "_photos_"))
     photos.mkdir(parents=True, exist_ok=True)
 
@@ -55,24 +56,22 @@ def test_build_cache_creates_files(tmp_path):
 
     cache_manager.build_cache(str(photos))
 
-    all_file = os.path.join(G.CACHE_DIR, "cache_all.txt")
-    same_file = os.path.join(G.CACHE_DIR, "cache_same_day.txt")
+    with open_database() as connection:
+        rows = connection.execute(
+            "SELECT path, same_day FROM photos ORDER BY path"
+        ).fetchall()
+        built_date = connection.execute(
+            "SELECT value FROM cache_metadata WHERE key = 'built_date'"
+        ).fetchone()[0]
 
-    assert os.path.exists(all_file)
-    assert os.path.exists(same_file)
-
-    # read both files and check basenames are present in either
-    found = set()
-    for p in (all_file, same_file):
-        if os.path.exists(p):
-            with open(p, "r", encoding="utf-8") as f:
-                for l in f:
-                    l = l.strip()
-                    if l:
-                        found.add(os.path.basename(l))
-
-    # At minimum, one of the cache files should contain at least one entry
-    assert len(found) > 0
+    assert {os.path.basename(path) for path, _ in rows} == {
+        same_name,
+        "other.jpg",
+    }
+    assert dict((os.path.basename(path), same_day) for path, same_day in rows)[
+        same_name
+    ] == 1
+    assert built_date == today.isoformat()
 
 
 def test_same_day_keys_is_set(tmp_path):
@@ -211,8 +210,8 @@ def test_prune_cache_skips_when_limit_disabled(tmp_path):
         G.CACHE_LIMIT = original_limit
 
 
-def test_prune_cache_preserves_same_day_from_index_file(tmp_path):
-    """Pruning should preserve same-day cache entries from cache_same_day.txt."""
+def test_prune_cache_preserves_same_day_from_sqlite_index(tmp_path):
+    """Pruning should preserve same-day cache entries from the SQLite index."""
     cache_dir, cache_dir_photo = setup_cache_dirs(tmp_path)
 
     photos = tmp_path / "photos_protect"
@@ -232,9 +231,10 @@ def test_prune_cache_preserves_same_day_from_index_file(tmp_path):
     make_image(same_cached)
     make_image(other_cached)
 
-    same_day_file = os.path.join(cache_dir, "cache_same_day.txt")
-    with open(same_day_file, "w", encoding="utf-8") as f:
-        f.write(str(same_source) + "\n")
+    with open_database() as connection:
+        connection.execute(
+            "INSERT INTO photos (path, same_day) VALUES (?, 1)", (str(same_source),)
+        )
 
     original_limit_enabled = G.CACHE_LIMIT_ENABLED
     original_limit = G.CACHE_LIMIT

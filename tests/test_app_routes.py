@@ -11,7 +11,8 @@ from PIL import Image
 import app.routes as routes
 from app import cache_manager
 from app import globals as G
-from app.session import PHOTO_STATE_SESSION_KEY, configure_server_sessions
+from app.cache_database import open_database, set_cache_service_health
+from app.session import configure_server_sessions
 
 
 def test_random_route_serves_image(tmp_path):
@@ -69,7 +70,7 @@ def test_api_random_route_returns_photo_age_payload(tmp_path, monkeypatch):
     today = datetime.date.today()
     ten_years_ago = datetime.date(today.year - 10, today.month, today.day)
 
-    monkeypatch.setattr(routes, "pick_file", lambda _base_dir, state=None: str(img_path))
+    monkeypatch.setattr(routes, "_select_photo_for_client", lambda: str(img_path))
     monkeypatch.setattr(routes, "get_photo_date", lambda _path: ten_years_ago)
     monkeypatch.setattr(routes, "resize_and_compress", fake_resize_and_compress)
 
@@ -86,8 +87,8 @@ def test_api_random_route_returns_photo_age_payload(tmp_path, monkeypatch):
     assert captured["overlays"]["top_right"] == ""
 
 
-def test_api_random_advances_after_single_same_day_photo(tmp_path):
-    """A client's second request should leave a one-photo same-day pool."""
+def test_api_random_tracks_clients_by_ip(tmp_path):
+    """Requests from the same IP share selection state across browser sessions."""
     photos = tmp_path / "photos"
     photos.mkdir()
 
@@ -117,18 +118,26 @@ def test_api_random_advances_after_single_same_day_photo(tmp_path):
     assert other_client_first.status_code == 200
     assert second.status_code == 200
     assert first.get_json()["photo_path"] == str(daily_photo)
-    assert other_client_first.get_json()["photo_path"] == str(daily_photo)
+    assert other_client_first.get_json()["photo_path"] == str(older_photo)
     assert second.get_json()["photo_path"] == str(older_photo)
 
-    session_cookie = first.headers.get("Set-Cookie", "")
-    assert "photomatic_session=" in session_cookie
-    assert "photomatic_photo_state" not in session_cookie
-    first_session_cookie = first_client.get_cookie("photomatic_session")
-    other_session_cookie = second_client.get_cookie("photomatic_session")
-    assert first_session_cookie is not None
-    assert other_session_cookie is not None
-    assert first_session_cookie.value != other_session_cookie.value
-    assert "photo_index" not in first_session_cookie.value
+    assert first.headers.get("Set-Cookie") is None
+
+
+def test_random_route_does_not_build_missing_cache(tmp_path, monkeypatch):
+    """Random requests return 503 when indexes are absent instead of building them."""
+    G.CACHE_DIR = str(tmp_path / "cache")
+    os.makedirs(G.CACHE_DIR, exist_ok=True)
+    G.PHOTO_ROOT = str(tmp_path / "photos")
+    monkeypatch.setattr(
+        cache_manager,
+        "build_cache",
+        lambda _root: (_ for _ in ()).throw(AssertionError("request built cache")),
+    )
+
+    response = G.app.test_client().get("/api/random")
+
+    assert response.status_code == 503
 
 
 def test_random_image_by_path_rejects_invalid_path(tmp_path):
@@ -167,16 +176,73 @@ def test_clear_cache_logs_request(monkeypatch):
 
 
 def test_clear_cache_removes_client_photo_state():
-    """Clearing the cache also resets only the requesting client's photo state."""
-    client = G.app.test_client()
-    with client.session_transaction() as server_session:
-        server_session[PHOTO_STATE_SESSION_KEY] = {"photo_index": 4}
+    """Clearing the cache clears persistent client tracking state."""
+    from app.client_photo_tracker import client_key_from_ip, select_photo
 
+    photos = G.PHOTO_ROOT or os.getcwd()
+    G.CACHE_DIR = os.path.join(G.app.instance_path, "cache")
+    G.CACHE_DIR_PHOTO = os.path.join(G.CACHE_DIR, "photos")
+    G.CACHE_DIR_ICON = os.path.join(G.CACHE_DIR, "icons")
+    os.makedirs(G.CACHE_DIR_PHOTO, exist_ok=True)
+    os.makedirs(G.CACHE_DIR_ICON, exist_ok=True)
+    with open_database() as connection:
+        connection.execute(
+            "INSERT OR REPLACE INTO photos (path, same_day) VALUES (?, 0)",
+            (os.path.join(photos, "cached.jpg"),),
+        )
+        connection.execute(
+            "INSERT OR REPLACE INTO cache_metadata (key, value) VALUES ('built_date', ?)",
+            (datetime.date.today().isoformat(),),
+        )
+    select_photo(client_key_from_ip("127.0.0.1"))
+    set_cache_service_health("healthy", succeeded=True)
+
+    client = G.app.test_client()
     response = client.get("/clear_cache")
 
     assert response.status_code == 200
-    with client.session_transaction() as server_session:
-        assert PHOTO_STATE_SESSION_KEY not in server_session
+    with open_database() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM clients").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM photos").fetchone()[0] == 0
+
+
+def test_healthcheck_reports_cache_service_health(tmp_path, monkeypatch):
+    """The health endpoint includes the cache service's SQLite heartbeat."""
+    cache_dir = tmp_path / "cache"
+    G.CACHE_DIR = str(cache_dir)
+    G.PHOTO_ROOT = str(tmp_path / "photos")
+    cache_dir.mkdir()
+    with open_database() as connection:
+        connection.execute(
+            "INSERT INTO cache_metadata (key, value) VALUES ('built_date', ?)",
+            (datetime.date.today().isoformat(),),
+        )
+    set_cache_service_health("healthy", succeeded=True)
+    monkeypatch.setattr(
+        routes,
+        "_api_call_status",
+        {
+            "config": {"ok": True, "last_error": None},
+            "weather": {"ok": True, "last_error": None},
+            "icon": {"ok": True, "last_error": None},
+            "random": {"ok": True, "last_error": None},
+        },
+    )
+
+    response = G.app.test_client().get("/healthcheck")
+
+    assert response.status_code == 200
+    assert response.get_json()["cache_service"]["ok"]
+
+
+def test_random_route_waits_while_background_service_builds(tmp_path):
+    """Random requests do not contend with an index rebuild in another process."""
+    G.CACHE_DIR = str(tmp_path / "cache")
+    set_cache_service_health("building", "Photo index rebuild is in progress")
+
+    response = G.app.test_client().get("/api/random")
+
+    assert response.status_code == 503
 
 
 def test_random_image_routes_fail_during_cache_build(tmp_path):
@@ -195,8 +261,8 @@ def test_random_image_routes_fail_during_cache_build(tmp_path):
     image_resp = client.get(f"/random_image?path={valid_photo}")
     api_resp = client.get("/api/random")
 
-    assert random_resp.status_code == 500
-    assert image_resp.status_code == 500
-    assert api_resp.status_code == 500
+    assert random_resp.status_code == 503
+    assert image_resp.status_code == 503
+    assert api_resp.status_code == 503
 
     G.BUILDING_CACHE = False
