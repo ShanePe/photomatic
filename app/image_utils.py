@@ -45,6 +45,33 @@ FONT_PATH = os.path.join(
 _FONT_CACHE: dict[int, ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
 _MAX_FONT_CACHE = 10  # Typically only 1-2 sizes used
 _CACHE_KEY_VERSION = "fullscreen-jpg-v1"
+_EXIF_ORIENTATION_TAG = 274
+
+
+def _read_process_memory():
+    """Read the current process RSS and high-water mark from Linux procfs."""
+    memory = {}
+    try:
+        with open("/proc/self/status", "r", encoding="ascii") as status_file:
+            for line in status_file:
+                if line.startswith(("VmRSS:", "VmHWM:")):
+                    name, value, _unit = line.split()
+                    memory[name[:-1]] = int(value)
+    except (OSError, ValueError):
+        return None
+
+    return memory if "VmRSS" in memory else None
+
+
+def _format_process_memory(memory):
+    if memory is None:
+        return "unavailable"
+
+    current = memory["VmRSS"] / 1024
+    peak = memory.get("VmHWM")
+    if peak is None:
+        return f"{current:.1f} MiB"
+    return f"{current:.1f} MiB (peak {peak / 1024:.1f} MiB)"
 
 
 def _build_cache_key(path: str, overlays: dict[str, str] | None, quality: int) -> str:
@@ -168,8 +195,6 @@ def resize_and_compress(
 
     original_size = os.path.getsize(path)
     jpeg_img = None
-    transposed_img = None
-    transposed_is_copy = False
     original_width, original_height = 0, 0
     final_width, final_height = 0, 0
     was_resized = False
@@ -182,17 +207,25 @@ def resize_and_compress(
         key_hash,
     )
 
+    memory_before = _read_process_memory()
+    work_img = None
     try:
         with Image.open(path) as img:
             original_width, original_height = img.size
             original_mode = img.mode
+            orientation = img.getexif().get(_EXIF_ORIENTATION_TAG)
 
-            # exif_transpose may return a new image or the same image
-            transposed_img = ImageOps.exif_transpose(img)
-            transposed_is_copy = transposed_img is not img
-            was_transposed = transposed_is_copy
-            # Use transposed image for processing (may be same as img)
-            work_img = transposed_img if transposed_is_copy else img
+            if img.format == "JPEG":
+                draft_size = (
+                    (G.MAX_HEIGHT, G.MAX_WIDTH)
+                    if orientation in (5, 6, 7, 8)
+                    else (G.MAX_WIDTH, G.MAX_HEIGHT)
+                )
+                img.draft("RGB", draft_size)
+
+            ImageOps.exif_transpose(img, in_place=True)
+            was_transposed = orientation in (2, 3, 4, 5, 6, 7, 8)
+            work_img = img
 
             width, height = work_img.size
             if width > G.MAX_WIDTH or height > G.MAX_HEIGHT:
@@ -209,7 +242,9 @@ def resize_and_compress(
             # render it at fullscreen without shrinking the source image. The
             # rounded corners are a display effect and should not alter the cached
             # pixel data.
-            jpeg_img = work_img.convert("RGB")
+            jpeg_img = (
+                work_img if work_img.mode == "RGB" else work_img.convert("RGB")
+            )
             jpeg_img.save(
                 cache_file,
                 format="JPEG",
@@ -225,14 +260,13 @@ def resize_and_compress(
                 G.CACHE_COUNT += 1
 
             # Close intermediate images inside the with block while we have valid references
-            jpeg_img.close()
+            if jpeg_img is not work_img:
+                jpeg_img.close()
             jpeg_img = None
-            if transposed_is_copy and transposed_img is not None:
-                transposed_img.close()
-                transposed_img = None
 
         compressed_size = os.path.getsize(cache_file)
         elapsed_ms = (time.perf_counter() - start_time) * 1000
+        memory_after = _read_process_memory()
         compression_ratio = (
             (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
         )
@@ -258,6 +292,12 @@ def resize_and_compress(
             elapsed_ms,
             G.CACHE_COUNT,
         )
+        G.logger.info(
+            "[ImageProcessor] Process memory | PID: %d | RSS: %s -> %s",
+            os.getpid(),
+            _format_process_memory(memory_before),
+            _format_process_memory(memory_after),
+        )
 
         prune_cache()
 
@@ -273,13 +313,8 @@ def resize_and_compress(
         raise e
     finally:
         # Cleanup in case of exception - close any remaining open images
-        if jpeg_img is not None:
+        if jpeg_img is not None and jpeg_img is not work_img:
             try:
                 jpeg_img.close()
-            except Exception:  # pylint: disable=broad-except
-                pass
-        if transposed_is_copy and transposed_img is not None:
-            try:
-                transposed_img.close()
             except Exception:  # pylint: disable=broad-except
                 pass

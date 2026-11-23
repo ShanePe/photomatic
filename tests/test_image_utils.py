@@ -4,6 +4,7 @@ Covers image resizing, compression, font caching, and overlay functionality.
 """
 
 import json
+import logging
 import os
 from PIL import Image
 
@@ -193,6 +194,73 @@ def test_resize_and_compress_uses_jpg_for_rounded_corners(tmp_path):
         meta = json.load(f)
 
     assert meta["mime_type"] == "image/jpeg"
+
+
+def test_resize_uses_jpeg_draft_for_exif_oriented_images(tmp_path, monkeypatch):
+    """JPEGs are downsampled during decode without changing EXIF orientation."""
+    photos = tmp_path / "photos_draft"
+    photos.mkdir()
+    img_path = photos / "draft_test.jpg"
+    exif = Image.Exif()
+    exif[274] = 6
+    Image.new("RGB", (400, 300), (200, 100, 50)).save(
+        img_path, format="JPEG", exif=exif
+    )
+
+    setup_cache_dirs(tmp_path)
+    monkeypatch.setattr(G, "MAX_WIDTH", 100)
+    monkeypatch.setattr(G, "MAX_HEIGHT", 80)
+
+    sizes_before_transpose = []
+    convert_calls = []
+    original_convert = Image.Image.convert
+    original_exif_transpose = image_utils.ImageOps.exif_transpose
+
+    def record_exif_transpose(image, **kwargs):
+        sizes_before_transpose.append(image.size)
+        assert kwargs["in_place"] is True
+        return original_exif_transpose(image, **kwargs)
+
+    def record_convert(image, *args, **kwargs):
+        convert_calls.append(image.mode)
+        return original_convert(image, *args, **kwargs)
+
+    monkeypatch.setattr(image_utils.ImageOps, "exif_transpose", record_exif_transpose)
+    monkeypatch.setattr(Image.Image, "convert", record_convert)
+
+    cache_file = image_utils.resize_and_compress(str(img_path), {}, 80)
+
+    assert len(sizes_before_transpose) == 1
+    assert sizes_before_transpose[0][0] < 400
+    assert sizes_before_transpose[0][1] < 300
+    assert convert_calls == []
+    with Image.open(cache_file) as cached:
+        assert cached.size == (60, 80)
+
+
+def test_resize_logs_process_memory(tmp_path, monkeypatch, caplog):
+    """Image conversion logs the worker's RSS before and after processing."""
+    photos = tmp_path / "photos_memory"
+    photos.mkdir()
+    img_path = photos / "memory_test.jpg"
+    make_image(str(img_path))
+    setup_cache_dirs(tmp_path)
+
+    memory_samples = iter(
+        [
+            {"VmRSS": 100 * 1024, "VmHWM": 120 * 1024},
+            {"VmRSS": 104 * 1024, "VmHWM": 125 * 1024},
+        ]
+    )
+    monkeypatch.setattr(
+        image_utils, "_read_process_memory", lambda: next(memory_samples)
+    )
+
+    with caplog.at_level(logging.INFO, logger="slideshow"):
+        image_utils.resize_and_compress(str(img_path), {}, 80)
+
+    assert "Process memory | PID:" in caplog.text
+    assert "100.0 MiB (peak 120.0 MiB) -> 104.0 MiB (peak 125.0 MiB)" in caplog.text
 
 
 def test_apply_round_corners_creates_rounded_edges():

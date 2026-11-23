@@ -46,4 +46,10 @@ Client IP tracking uses Flask's `request.remote_addr`. When running behind a
 reverse proxy, configure trusted proxy handling if per-device addresses are
 needed; otherwise clients may share the proxy's tracking key.
 
+Image conversion logs include the worker PID and RSS before and after each
+conversion, plus the worker's RSS high-water mark. Gunicorn workers are
+recycled after 1,000 requests by default to bound memory retained by native
+image libraries. Set `GUNICORN_MAX_REQUESTS` and
+`GUNICORN_MAX_REQUESTS_JITTER` to tune recycling; set both to `0` to disable it.
+
 If you want a runnable smoke test or a small Postman collection, tell me and I’ll add it.
