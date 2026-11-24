@@ -12,8 +12,6 @@ services:
 
     environment:
       LANG: C.UTF-8
-      PYTHON_VERSION: 3.10.19
-      PYTHON_SHA256: c8f4a596572201d81dd7df91f70e177e19a70f1d489968b54b5fbbf29a97c076
       FLASK_ENV: production
       PORT: 80
       CONFIG_FILE: /etc/photomatic/config.yaml

@@ -52,7 +52,7 @@ You can also run Photomatic inside a Docker container.
 
 Dockerfile (create in project root):
 
-FROM python:3.11-slim
+FROM python:3.14-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -84,7 +84,7 @@ photomatic/
 
 ## 🛠 Requirements
 
-- Python 3.6+
+- Python 3.11+
 - Flask
 - Pillow
 - pillow-heif (for HEIC support)
