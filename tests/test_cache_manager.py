@@ -4,6 +4,8 @@ Covers cache building, pruning, metadata handling, and SAME_DAY_KEYS operations.
 """
 
 import os
+import logging
+import sqlite3
 from pathlib import Path
 
 from PIL import Image
@@ -34,8 +36,33 @@ def setup_cache_dirs(tmp_path):
     return G.CACHE_DIR, G.CACHE_DIR_PHOTO
 
 
-def test_build_cache_populates_sqlite_index(tmp_path):
-    """Test that build_cache indexes photo paths and marks same-day images."""
+def test_cache_database_adds_photo_date_to_existing_schema(tmp_path):
+    """Existing photo indexes gain the date column without losing entries."""
+    cache_dir, _ = setup_cache_dirs(tmp_path)
+    database_path = os.path.join(cache_dir, G.CACHE_DATABASE_FILENAME)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "CREATE TABLE photos (path TEXT PRIMARY KEY, same_day INTEGER NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO photos (path, same_day) VALUES (?, ?)",
+            ("/photos/existing.jpg", 0),
+        )
+
+    with open_database() as connection:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(photos)")
+        }
+        photo = connection.execute(
+            "SELECT path, same_day, photo_date FROM photos"
+        ).fetchone()
+
+    assert "photo_date" in columns
+    assert photo == ("/photos/existing.jpg", 0, None)
+
+
+def test_build_cache_populates_sqlite_index(tmp_path, monkeypatch):
+    """Test that build_cache indexes photo paths, dates, and same-day images."""
     photos = Path(str(tmp_path).replace("_cache_", "_photos_"))
     photos.mkdir(parents=True, exist_ok=True)
 
@@ -58,19 +85,28 @@ def test_build_cache_populates_sqlite_index(tmp_path):
 
     with open_database() as connection:
         rows = connection.execute(
-            "SELECT path, same_day FROM photos ORDER BY path"
+            "SELECT path, same_day, photo_date FROM photos ORDER BY path"
         ).fetchall()
         built_date = connection.execute(
             "SELECT value FROM cache_metadata WHERE key = 'built_date'"
         ).fetchone()[0]
 
-    assert {os.path.basename(path) for path, _ in rows} == {
+    assert {os.path.basename(path) for path, _, _ in rows} == {
         same_name,
         "other.jpg",
     }
-    assert dict((os.path.basename(path), same_day) for path, same_day in rows)[
+    assert dict((os.path.basename(path), same_day) for path, same_day, _ in rows)[
         same_name
     ] == 1
+    assert dict((os.path.basename(path), photo_date) for path, _, photo_date in rows)[
+        same_name
+    ] == today.isoformat()
+    monkeypatch.setattr(
+        cache_manager,
+        "get_photo_date",
+        lambda _path: (_ for _ in ()).throw(AssertionError("date was reparsed")),
+    )
+    assert cache_manager.get_cached_photo_date(str(same_path)) == today
     assert built_date == today.isoformat()
 
 
@@ -172,7 +208,10 @@ def test_write_and_get_image_metadata(tmp_path):
     make_image(cache_file)
 
     # Write metadata
-    result = cache_manager.write_image_metadata(cache_file, 800, 600, "image/jpeg")
+    photo_date = cache_manager.datetime.date(2012, 1, 15)
+    result = cache_manager.write_image_metadata(
+        cache_file, 800, 600, "image/jpeg", photo_date
+    )
     assert result is True
 
     # Read it back
@@ -180,6 +219,37 @@ def test_write_and_get_image_metadata(tmp_path):
     assert width == 800
     assert height == 600
     assert mime_type == "image/jpeg"
+    assert not os.path.exists(cache_file + ".json")
+    with open_database() as connection:
+        metadata = connection.execute(
+            """
+            SELECT width, height, mime_type, photo_date
+            FROM image_metadata WHERE cache_path = ?
+            """,
+            (cache_file,),
+        ).fetchone()
+    assert metadata == (800, 600, "image/jpeg", photo_date.isoformat())
+
+
+def test_parse_date_from_filename_ignores_identifier_numbers(caplog):
+    """Invalid number sequences in identifiers should not produce date errors."""
+    filenames = (
+        "f9ebd560-ffd4-4427-8def-5134528676f2.JPG",
+        "Snapchat-3491505695126234224.jpg",
+        ".facebook_1531849802989.jpg",
+        "B5A7AECF-A740-4FE9-AD62-519007598302.JPG",
+    )
+
+    with caplog.at_level(logging.ERROR, logger="slideshow"):
+        assert all(
+            cache_manager.parse_date_from_filename(filename) is None
+            for filename in filenames
+        )
+
+    assert not caplog.records
+    assert cache_manager.parse_date_from_filename("IMG_2020-02-10_1130.jpg") == (
+        cache_manager.datetime.date(2020, 2, 10)
+    )
 
 
 def test_prune_cache_skips_when_limit_disabled(tmp_path):

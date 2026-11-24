@@ -3,13 +3,14 @@
 Covers image resizing, compression, font caching, and overlay functionality.
 """
 
-import json
+import datetime
 import logging
 import os
 from PIL import Image
 
 from app import image_utils
 from app import globals as G
+from app.cache_database import open_database
 
 
 def make_image(path, size=(300, 200), color=(200, 100, 50)):
@@ -109,7 +110,7 @@ def test_font_cache_limit():
 
 
 def test_resize_and_compress_creates_metadata(tmp_path):
-    """Test that resize_and_compress creates a metadata sidecar file."""
+    """Test that resize_and_compress stores metadata in SQLite."""
     photos = tmp_path / "photos_meta"
     photos.mkdir()
     img_path = photos / "meta_test.jpg"
@@ -117,20 +118,24 @@ def test_resize_and_compress_creates_metadata(tmp_path):
 
     setup_cache_dirs(tmp_path)
 
+    photo_date = datetime.date(2012, 1, 15)
     cache_file_path = image_utils.resize_and_compress(
-        str(img_path), {"bottom_right": "Metadata Test"}, 75
+        str(img_path),
+        {"bottom_right": "Metadata Test"},
+        75,
+        photo_date=photo_date,
     )
 
-    # Metadata file should exist
-    meta_file = cache_file_path + ".json"
-    assert os.path.exists(meta_file)
-
-    # Verify metadata content
-    with open(meta_file, "r", encoding="utf-8") as f:
-        meta = json.load(f)
-    assert "width" in meta
-    assert "height" in meta
-    assert meta["mime_type"] == "image/jpeg"
+    assert not os.path.exists(cache_file_path + ".json")
+    with open_database() as connection:
+        meta = connection.execute(
+            """
+            SELECT width, height, mime_type, photo_date
+            FROM image_metadata WHERE cache_path = ?
+            """,
+            (cache_file_path,),
+        ).fetchone()
+    assert meta == (300, 200, "image/jpeg", photo_date.isoformat())
 
 
 def test_resize_and_compress_cache_hit(tmp_path):
@@ -190,10 +195,12 @@ def test_resize_and_compress_uses_jpg_for_rounded_corners(tmp_path):
     with Image.open(cache_file) as img:
         assert img.mode in {"RGB", "L"}
 
-    with open(cache_file + ".json", "r", encoding="utf-8") as f:
-        meta = json.load(f)
-
-    assert meta["mime_type"] == "image/jpeg"
+    with open_database() as connection:
+        meta = connection.execute(
+            "SELECT mime_type FROM image_metadata WHERE cache_path = ?",
+            (cache_file,),
+        ).fetchone()
+    assert meta == ("image/jpeg",)
 
 
 def test_resize_uses_jpeg_draft_for_exif_oriented_images(tmp_path, monkeypatch):

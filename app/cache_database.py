@@ -31,10 +31,18 @@ def connect():
                 """
                 CREATE TABLE IF NOT EXISTS photos (
                     path TEXT PRIMARY KEY,
-                    same_day INTEGER NOT NULL
+                    same_day INTEGER NOT NULL,
+                    photo_date TEXT
                 );
                 CREATE INDEX IF NOT EXISTS photos_by_day_and_path
                     ON photos (same_day, path);
+                CREATE TABLE IF NOT EXISTS image_metadata (
+                    cache_path TEXT PRIMARY KEY,
+                    width INTEGER NOT NULL,
+                    height INTEGER NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    photo_date TEXT
+                );
                 CREATE TABLE IF NOT EXISTS cache_metadata (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
@@ -53,6 +61,11 @@ def connect():
                 );
                 """
             )
+            photo_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(photos)")
+            }
+            if "photo_date" not in photo_columns:
+                connection.execute("ALTER TABLE photos ADD COLUMN photo_date TEXT")
             _INITIALIZED_PATHS.add(path)
     return connection
 
@@ -72,6 +85,7 @@ def clear_database():
     """Clear indexed photos, build metadata, and all client state."""
     with open_database() as connection:
         connection.execute("DELETE FROM photos")
+        connection.execute("DELETE FROM image_metadata")
         connection.execute("DELETE FROM cache_metadata")
         connection.execute("DELETE FROM clients")
 

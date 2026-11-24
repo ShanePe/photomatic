@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 import requests
 
 from . import globals as G
-from .cache_manager import prune_cache, write_image_metadata
+from .cache_manager import get_image_metadata, prune_cache, write_image_metadata
 
 # HTTP session for connection pooling and reuse
 _SESSION_CONTAINER: dict[str, requests.Session | None] = {"session": None}
@@ -172,6 +172,7 @@ def resize_and_compress(
     path: str,
     overlays: dict[str, str] | None = None,
     quality: int = 75,
+    photo_date=None,
 ) -> str:
     """
     Resize/compress image with optional overlay text, using local cache.
@@ -186,6 +187,7 @@ def resize_and_compress(
 
     # --- Cache check ---
     if os.path.exists(cache_file):
+        get_image_metadata(cache_file, photo_date)
         G.logger.info(
             "[ImageProcessor] Cache hit for %s (size %.1f KB)",
             path,
@@ -254,7 +256,13 @@ def resize_and_compress(
 
             # Write metadata file (use final dimensions after thumbnail)
             final_width, final_height = jpeg_img.size
-            write_image_metadata(cache_file, final_width, final_height, "image/jpeg")
+            write_image_metadata(
+                cache_file,
+                final_width,
+                final_height,
+                "image/jpeg",
+                photo_date,
+            )
 
             with G.get_cache_lock():
                 G.CACHE_COUNT += 1
