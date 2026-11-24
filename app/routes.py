@@ -25,8 +25,8 @@ from . import globals as G
 from .cache_manager import (
     clear_entire_cache,
     format_date_with_suffix,
+    get_cached_photo_date,
     get_image_metadata,
-    get_photo_date,
 )
 from .cache_database import (
     cache_service_is_building,
@@ -123,7 +123,7 @@ def _is_path_under_root(path: str, root: str | None) -> bool:
 
 def _prepare_random_photo_payload(path: str) -> dict[str, str]:
     """Prepare random photo metadata and ensure cached image exists."""
-    photo_date = get_photo_date(path)
+    photo_date = get_cached_photo_date(path)
     age_label = _format_photo_age_label(photo_date)
 
     cache_file = resize_and_compress(
@@ -133,6 +133,7 @@ def _prepare_random_photo_payload(path: str) -> dict[str, str]:
             "top_right": "",
         },
         50,
+        photo_date=photo_date,
     )
 
     return {

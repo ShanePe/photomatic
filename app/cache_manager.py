@@ -3,7 +3,6 @@
 import datetime
 import hashlib
 import heapq
-import json
 import os
 import random
 import re
@@ -98,59 +97,84 @@ def _load_same_day_keys_from_database():
 # --- Metadata utilities ---
 
 
-def write_image_metadata(cache_file, width, height, mime_type="image/jpeg"):
+def write_image_metadata(
+    cache_file, width, height, mime_type="image/jpeg", photo_date=None
+):
     """
-    Write image metadata to a .json sidecar file.
+    Store converted-image metadata in the SQLite cache.
 
     Args:
         cache_file: Path to the cached image file.
         width: Image width in pixels.
         height: Image height in pixels.
         mime_type: MIME type of the image (default: image/jpeg).
+        photo_date: Original photo date, if known.
 
     Returns:
         bool: True if successful, False otherwise.
     """
-    meta_file = cache_file + ".json"
     try:
-        with open(meta_file, "w", encoding="utf-8") as f:
-            json.dump({"width": width, "height": height, "mime_type": mime_type}, f)
+        if hasattr(photo_date, "isoformat"):
+            photo_date = photo_date.isoformat()
+        with open_database() as connection:
+            connection.execute(
+                """
+                INSERT INTO image_metadata
+                    (cache_path, width, height, mime_type, photo_date)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(cache_path) DO UPDATE SET
+                    width = excluded.width,
+                    height = excluded.height,
+                    mime_type = excluded.mime_type,
+                    photo_date = COALESCE(
+                        excluded.photo_date, image_metadata.photo_date
+                    )
+                """,
+                (cache_file, width, height, mime_type, photo_date),
+            )
         return True
-    except (OSError, IOError) as e:
+    except (OSError, IOError, sqlite3.Error) as e:
         G.logger.warning(
-            "[Metadata] Failed to write metadata file %s: %s", meta_file, e
+            "[Metadata] Failed to store image metadata for %s: %s", cache_file, e
         )
         return False
 
 
-def get_image_metadata(cache_file):
+def get_image_metadata(cache_file, photo_date=None):
     """
     Return (width, height, mime_type) for a cached JPEG file.
 
-    If a metadata .json file exists, use it. Otherwise, open the image,
-    extract metadata, write the .json via write_image_metadata, and return.
+    Read metadata from SQLite, inspecting the image once when no database
+    record exists.
     """
-    meta_file = cache_file + ".json"
+    try:
+        with open_database() as connection:
+            row = connection.execute(
+                """
+                SELECT width, height, mime_type, photo_date
+                FROM image_metadata WHERE cache_path = ?
+                """,
+                (cache_file,),
+            ).fetchone()
+        if row:
+            if photo_date is not None and row[3] is None:
+                write_image_metadata(cache_file, row[0], row[1], row[2], photo_date)
+            return row[0], row[1], row[2]
+    except sqlite3.Error as e:
+        G.logger.warning(
+            "[Metadata] Failed to read cached image metadata for %s: %s",
+            cache_file,
+            e,
+        )
 
-    # Try reading existing metadata file
-    if os.path.exists(meta_file):
-        try:
-            with open(meta_file, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-            return meta["width"], meta["height"], meta["mime_type"]
-        except (OSError, IOError, json.JSONDecodeError, KeyError) as e:
-            G.logger.warning(
-                "[Metadata] Failed to read metadata file %s: %s", meta_file, e
-            )
-
-    # Fallback: open image, extract metadata, and write it
+    # Read the cached image once when no database record exists.
     try:
         with Image.open(cache_file) as img:
             width, height = img.size
             mime_type = (
                 getattr(img, "get_format_mimetype", lambda: None)() or "image/jpeg"
             )
-        write_image_metadata(cache_file, width, height, mime_type)
+        write_image_metadata(cache_file, width, height, mime_type, photo_date)
         return width, height, mime_type
     except (OSError, UnidentifiedImageError) as e:
         G.logger.error(
@@ -166,25 +190,20 @@ def parse_date_from_filename(filename):
     """Extract a date from `filename` using common filename patterns.
 
     Recognizes `YYYYMMDD` and `YYYY-MM-DD` patterns and returns a
-    `datetime.date` instance or `None` if no valid date is found.
+    `datetime.date` instance or `None` if no valid date is found. Date
+    tokens must be separated from adjacent letters and digits so IDs and
+    hashes are not mistaken for dates.
     """
-    m1 = re.search(r"(\d{4})(\d{2})(\d{2})", filename)
-    if m1:
-        try:
-            return datetime.date(int(m1.group(1)), int(m1.group(2)), int(m1.group(3)))
-        except ValueError as e:
-            G.logger.error(
-                "[DateParser] Invalid YYYYMMDD in filename %s: %s", filename, e
-            )
-
-    m2 = re.search(r"(\d{4})-(\d{2})-(\d{2})", filename)
-    if m2:
-        try:
-            return datetime.date(int(m2.group(1)), int(m2.group(2)), int(m2.group(3)))
-        except ValueError as e:
-            G.logger.error(
-                "[DateParser] Invalid YYYY-MM-DD in filename %s: %s", filename, e
-            )
+    patterns = (
+        r"(?<![A-Za-z0-9])(\d{4})(\d{2})(\d{2})(?![A-Za-z0-9])",
+        r"(?<![A-Za-z0-9])(\d{4})-(\d{2})-(\d{2})(?![A-Za-z0-9])",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, filename):
+            try:
+                return datetime.date(*(int(part) for part in match.groups()))
+            except ValueError:
+                continue
 
     return None
 
@@ -233,6 +252,30 @@ def get_photo_date(path):
         G.logger.error("[DateParser] File timestamp read failed for %s: %s", path, e)
 
     return None
+
+
+def get_cached_photo_date(path):
+    """Return a photo date from the index, parsing and caching legacy rows once."""
+    with open_database() as connection:
+        row = connection.execute(
+            "SELECT photo_date FROM photos WHERE path = ?", (path,)
+        ).fetchone()
+
+    if row is None:
+        return get_photo_date(path)
+    if row[0] is not None:
+        try:
+            return datetime.date.fromisoformat(row[0]) if row[0] else None
+        except ValueError:
+            G.logger.warning("[DateParser] Invalid cached photo date for %s", path)
+
+    photo_date = get_photo_date(path)
+    with open_database() as connection:
+        connection.execute(
+            "UPDATE photos SET photo_date = ? WHERE path = ?",
+            (photo_date.isoformat() if photo_date else "", path),
+        )
+    return photo_date
 
 
 def format_date_with_suffix(dt):
@@ -293,6 +336,10 @@ def prune_cache():
                     meta_file = f + ".json"
                     if os.path.exists(meta_file):
                         os.remove(meta_file)
+                    with open_database() as connection:
+                        connection.execute(
+                            "DELETE FROM image_metadata WHERE cache_path = ?", (f,)
+                        )
                     current_count -= 1
                     G.CACHE_COUNT = current_count
                     G.logger.info("[CacheManager] Cache pruned: removed %s", f)
@@ -437,7 +484,13 @@ def build_cache(base_dir, progress_callback=None):
             staging_connection = sqlite3.connect(staging_path, timeout=30)
             try:
                 staging_connection.execute(
-                    "CREATE TABLE photos (path TEXT PRIMARY KEY, same_day INTEGER NOT NULL)"
+                    """
+                    CREATE TABLE photos (
+                        path TEXT PRIMARY KEY,
+                        same_day INTEGER NOT NULL,
+                        photo_date TEXT
+                    )
+                    """
                 )
                 with staging_connection:
                     staging_connection.execute("BEGIN")
@@ -456,8 +509,16 @@ def build_cache(base_dir, progress_callback=None):
                                     and photo_date.day == today.day
                                 )
                                 staging_connection.execute(
-                                    "INSERT OR REPLACE INTO photos (path, same_day) VALUES (?, ?)",
-                                    (path, int(same_day)),
+                                    """
+                                    INSERT OR REPLACE INTO photos
+                                        (path, same_day, photo_date)
+                                    VALUES (?, ?, ?)
+                                    """,
+                                    (
+                                        path,
+                                        int(same_day),
+                                        photo_date.isoformat() if photo_date else "",
+                                    ),
                                 )
                                 if same_day:
                                     G.SAME_DAY_KEYS.add(
@@ -481,8 +542,8 @@ def build_cache(base_dir, progress_callback=None):
                 connection.execute("DELETE FROM photos")
                 connection.execute(
                     """
-                    INSERT INTO photos (path, same_day)
-                    SELECT path, same_day FROM staging.photos
+                    INSERT INTO photos (path, same_day, photo_date)
+                    SELECT path, same_day, photo_date FROM staging.photos
                     """
                 )
                 connection.execute(

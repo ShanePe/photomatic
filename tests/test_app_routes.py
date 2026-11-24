@@ -61,17 +61,20 @@ def test_api_random_route_returns_photo_age_payload(tmp_path, monkeypatch):
 
     captured = {}
 
-    def fake_resize_and_compress(path, overlays=None, quality=75):
+    def fake_resize_and_compress(path, overlays=None, quality=75, photo_date=None):
         captured["path"] = path
         captured["overlays"] = overlays or {}
         captured["quality"] = quality
+        captured["photo_date"] = photo_date
         return str(img_path)
 
     today = datetime.date.today()
     ten_years_ago = datetime.date(today.year - 10, today.month, today.day)
 
     monkeypatch.setattr(routes, "_select_photo_for_client", lambda: str(img_path))
-    monkeypatch.setattr(routes, "get_photo_date", lambda _path: ten_years_ago)
+    monkeypatch.setattr(
+        routes, "get_cached_photo_date", lambda _path: ten_years_ago
+    )
     monkeypatch.setattr(routes, "resize_and_compress", fake_resize_and_compress)
 
     G.PHOTO_ROOT = str(photos)
@@ -83,6 +86,7 @@ def test_api_random_route_returns_photo_age_payload(tmp_path, monkeypatch):
     assert data["age_label"] == "Today, 10 years ago"
     assert data["photo_path"] == str(img_path)
     assert data["image_url"].startswith("/random_image?path=")
+    assert captured["photo_date"] == ten_years_ago
     # Age label now renders on the client, so top_right overlay should be empty.
     assert captured["overlays"]["top_right"] == ""
 
