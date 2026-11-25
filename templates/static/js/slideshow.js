@@ -55,8 +55,23 @@ function setAgeOverlay(text, anchorImg, visible = false) {
   }
 }
 
+function setPhotoPathOverlay(text, visible = false) {
+  const overlay = document.getElementById('photo-path-overlay');
+  if (!overlay) return;
+
+  overlay.textContent = text || '';
+  overlay.classList.toggle('has-text', !!text);
+  overlay.classList.toggle('show', !!text && visible);
+}
+
 function hideAgeOverlay() {
   const overlay = document.getElementById('photo-age-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('show');
+}
+
+function hidePhotoPathOverlay() {
+  const overlay = document.getElementById('photo-path-overlay');
   if (!overlay) return;
   overlay.classList.remove('show');
 }
@@ -98,6 +113,13 @@ async function showAgeOverlay(anchorImg) {
   requestAnimationFrame(() => {
     overlay.classList.add('show');
   });
+}
+
+function showPhotoPathOverlay() {
+  const overlay = document.getElementById('photo-path-overlay');
+  if (overlay && overlay.classList.contains('has-text')) {
+    requestAnimationFrame(() => overlay.classList.add('show'));
+  }
 }
 
 async function fetchRandomPayload() {
@@ -159,10 +181,12 @@ export async function loadImage(transitions, kenBurns, photoSwitchMs) {
       current.style.display = 'block';
       applyImageFit(current);
       setAgeOverlay(payload.age_label, null, false);
+      setPhotoPathOverlay(payload.photo_relative_path, false);
 
       await nextAnimationFrame();
       current.classList.add('show');
       await showAgeOverlay(current);
+      showPhotoPathOverlay();
 
       if (kenBurns) {
         current.classList.add('ken-burns');
@@ -188,9 +212,10 @@ export async function loadImage(transitions, kenBurns, photoSwitchMs) {
     applyImageFit(next);
 
     if (hasCurrentPhoto) {
-      // Fade out the current photo and its current age label first.
+      // Fade out the current photo and its metadata overlays first.
       current.classList.remove('show');
       hideAgeOverlay();
+      hidePhotoPathOverlay();
 
       await Promise.all([
         waitForAgeOverlayHidden(),
@@ -200,10 +225,12 @@ export async function loadImage(transitions, kenBurns, photoSwitchMs) {
 
     // Only set the next label after the previous one is fully gone.
     setAgeOverlay(payload.age_label, null, false);
+    setPhotoPathOverlay(payload.photo_relative_path, false);
 
     // Now transition in the next image
     next.classList.add('show');
     await showAgeOverlay(next);
+    showPhotoPathOverlay();
 
     // Wait for transition in to finish
     await new Promise((resolve) => setTimeout(resolve, FADE_MS));

@@ -139,6 +139,9 @@ def _prepare_random_photo_payload(path: str) -> dict[str, str]:
     return {
         "cache_file": cache_file,
         "photo_path": path,
+        "photo_relative_path": os.path.relpath(path, G.PHOTO_ROOT).replace(
+            os.sep, "/"
+        ),
         "age_label": age_label,
         "photo_date": format_date_with_suffix(photo_date) if photo_date else "",
     }
@@ -323,6 +326,7 @@ def api_random_image():
             jsonify(
                 {
                     "photo_path": payload["photo_path"],
+                    "photo_relative_path": payload["photo_relative_path"],
                     "photo_date": payload["photo_date"],
                     "age_label": payload["age_label"],
                     "image_url": f"/random_image?path={quote(path, safe='')}",

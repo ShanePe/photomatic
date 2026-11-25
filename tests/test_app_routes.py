@@ -49,7 +49,8 @@ def test_api_random_route_returns_photo_age_payload(tmp_path, monkeypatch):
     photos.mkdir()
 
     img = Image.new("RGB", (120, 90), (10, 20, 30))
-    img_path = photos / "same_day.jpg"
+    img_path = photos / "2026" / "01" / "img3.jpg"
+    img_path.parent.mkdir(parents=True)
     img.save(str(img_path), format="JPEG")
 
     inst = tmp_path / "instance"
@@ -85,6 +86,7 @@ def test_api_random_route_returns_photo_age_payload(tmp_path, monkeypatch):
     data = resp.get_json()
     assert data["age_label"] == "Today, 10 years ago"
     assert data["photo_path"] == str(img_path)
+    assert data["photo_relative_path"] == "2026/01/img3.jpg"
     assert data["image_url"].startswith("/random_image?path=")
     assert captured["photo_date"] == ten_years_ago
     # Age label now renders on the client, so top_right overlay should be empty.

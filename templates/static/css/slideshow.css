@@ -52,7 +52,8 @@
   opacity: 1;
 }
 
-#photo-age-overlay {
+#photo-age-overlay,
+#photo-path-overlay {
   position: fixed;
   top: 24px;
   left: 24px;
@@ -72,11 +73,24 @@
   word-break: break-word;
 }
 
-#photo-age-overlay.has-text {
+#photo-age-overlay {
+  font-size: clamp(14px, 1.3vw, 22px);
+}
+
+#photo-path-overlay {
+  top: auto;
+  bottom: 16px;
+  left: 16px;
+  font-size: clamp(12px, 1.1vw, 18px);
+}
+
+#photo-age-overlay.has-text,
+#photo-path-overlay.has-text {
   visibility: visible;
 }
 
-#photo-age-overlay.show {
+#photo-age-overlay.show,
+#photo-path-overlay.show {
   opacity: 1;
 }
 
